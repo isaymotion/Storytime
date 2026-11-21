@@ -786,12 +786,17 @@
     return '<a class="av av--' + c.s + '" href="' + esc(SRC.libby(c.id)) + '" target="_blank" rel="noopener" title="Open in Libby">' + label + ' <small>' + esc(txt) + (showLib && c.lib ? ' · ' + esc(c.lib.name) : '') + '</small><span class="sr-only"> (opens in Libby)</span></a>';
   }
   function libbyQuery(b) { return mainTitle(b.title) + (b.author ? ' ' + surname(b.author) : ''); }
-  /* One button per book: the best copy found (ebook first on a tie), or a Libby search at her first library if none is known yet. */
+  /* A button per format that a library holds, each going to the best copy of that format.
+     If neither is known (not checked, or not held), one button searches Libby at her first library. */
   function libbyButton(b, s, libs) {
     if (!libs.length) return '';
-    var best = rank(s.audiobook) < rank(s.ebook) ? s.audiobook : s.ebook, has = best && best.s !== 'none' && best.id;
-    var href = has ? SRC.libbyApp(best.lib.key, libbyQuery(b), best.id) : SRC.libbyApp(libs[0].key, libbyQuery(b));
-    return '<a class="btn libby-btn" href="' + esc(href) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Open in Libby app</a>';
+    var q = libbyQuery(b), out = '';
+    ['ebook', 'audiobook'].forEach(function (f) {
+      var c = s[f];
+      if (c && c.s !== 'none' && c.id) out += '<a class="btn libby-btn" href="' + esc(SRC.libbyApp(c.lib.key, q, c.id)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Open ' + f + ' in Libby app</a>';
+    });
+    if (!out) out = '<a class="btn libby-btn" href="' + esc(SRC.libbyApp(libs[0].key, q)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Search in Libby app</a>';
+    return '<div class="book__fmts">' + out + '</div>';
   }
   function bookRow(b, avail, libs) {
     var s = summarize(b, avail, libs);
@@ -961,7 +966,7 @@
         : '') + '<p class="legend"><span class="av av--' + s.overall + '">' + ST_LABEL[s.overall] + '</span></p>' +
       ((libs.length ? '<h2>At your libraries</h2>' + perLib + (when ? '<p class="muted">Last checked ' + esc(bkDate(new Date(when).toISOString())) + '.</p>' : '') : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') +
         '<div class="actions"><button type="button" class="btn" data-act="check-one" data-id="' + esc(b.id) + '"' + (libs.length ? '' : ' disabled') + '>Check this book</button></div><div id="chk">' + jobHTML() + '</div>') +
-      (libs.length ? '<div class="actions">' + libbyButton(b, s, libs) + '</div>' : '') +
+      libbyButton(b, s, libs) +
       '<h2>Your shelf</h2><div class="actions">' +
         (done ? '<button type="button" class="btn" data-act="unfinish" data-id="' + esc(b.id) + '">Move back to my list</button>' + (b.local ? '' : '<a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>')
               : '<button type="button" class="btn btn--solid" data-act="finish" data-id="' + esc(b.id) + '">Mark as finished</button><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>') +

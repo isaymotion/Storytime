@@ -4,6 +4,14 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.0.5',
+    date: '2026-11-21',
+    title: 'Separate Libby buttons for ebook and audiobook',
+    items: [
+      { type: 'feature', text: 'Each book now has “Open ebook in Libby app” and “Open audiobook in Libby app”, one for each format your libraries hold. Books not found yet get “Search in Libby app”.', href: '#/books' }
+    ]
+  },
+  {
     version: '1.0.4',
     date: '2026-11-21',
     title: 'Open in Libby app button',
