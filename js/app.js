@@ -973,9 +973,9 @@
       (libs.length ? libs.map(function (l) {
         return '<div class="card libcard"><h3>' + esc(l.name) + '</h3><p class="muted">Code: ' + esc(l.key) + '</p><div class="actions"><a class="btn" href="https://libbyapp.com/library/' + esc(encodeURIComponent(l.key)) + '" target="_blank" rel="noopener">Open in Libby</a><button type="button" class="link-btn" data-act="lib-remove" data-id="' + esc(l.key) + '">Remove</button></div></div>';
       }).join('') : '<div class="empty"><p>No libraries yet.</p></div>') +
-      '<h2>Add a library</h2><form class="card" data-form="add-lib"><div class="field"><label for="lib-in">Library code or web address</label>' +
-        '<input id="lib-in" name="lib" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="e.g. nypl or https://nypl.overdrive.com" required>' +
-        '<small>The code is the first part of your library’s OverDrive web address, <strong>code</strong>.overdrive.com. It is usually a short form of the name: New York Public Library is <strong>nypl</strong>, Brooklyn Public Library is <strong>brooklyn</strong>. Not sure? Search the web for your library’s name plus “OverDrive” and paste the address here.</small></div>' +
+      '<h2>Add a library</h2><form class="card" data-form="add-lib"><div class="field"><label for="lib-in">Library codes or web addresses</label>' +
+        '<input id="lib-in" name="lib" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="e.g. nypl, brooklyn" required>' +
+        '<small>The code is the first part of your library’s OverDrive web address, <strong>code</strong>.overdrive.com. It is usually a short form of the name: New York Public Library is <strong>nypl</strong>, Brooklyn Public Library is <strong>brooklyn</strong>. Several at once is fine: separate them with commas. Not sure of one? Search the web for your library’s name plus “OverDrive” and paste the address here.</small></div>' +
         '<div class="actions"><button type="submit" class="btn btn--solid">Add library</button></div><p class="status-line" id="lib-status" role="status" aria-live="polite"></p></form></div>';
   };
 
@@ -1047,20 +1047,29 @@
     var btn = e.target.querySelector('button[type="submit"]');
     function busy(v) { if (btn) btn.disabled = v; }
     if (f === 'add-lib') {
-      var raw = String(e.target.lib.value || '').trim().toLowerCase();
-      var m = /libbyapp\.com\/library\/([a-z0-9-]+)/.exec(raw) || /^(?:https?:\/\/)?([a-z0-9-]+)\.(?:lib\.)?overdrive\.com/.exec(raw) || /^([a-z0-9-]+)$/.exec(raw);
-      if (!m) { say('lib-status', 'That does not look like a library code or address.', true); return; }
-      var key = m[1];
-      if (getLibs().some(function (l) { return l.key === key; })) { say('lib-status', 'That library is already on your list.', true); return; }
-      say('lib-status', 'Looking up ' + key + '…'); busy(true);
-      fetchText(SRC.libInfo(key), isJSON).then(function (txt) {
-        var d = JSON.parse(txt), k = String(d.preferredKey || d.id || key).toLowerCase(), libs = getLibs();
-        if (!libs.some(function (l) { return l.key === k; })) libs.push({ key: k, name: String(d.name || k).slice(0, 120) });
-        store.set('libs', libs); rebuildIndex(); route({ keepScroll: true });
-      }).catch(function (err) {
-        busy(false);
-        say('lib-status', err && err.status === 404 ? 'No library uses the code “' + key + '”. Check the spelling in Libby.' : 'Storytime could not reach the library catalogue. Check your connection and try again.', true);
+      var keys = [], badInput = [];
+      String(e.target.lib.value || '').toLowerCase().split(/[\s,;]+/).forEach(function (raw) {
+        if (!raw) return;
+        var m = /libbyapp\.com\/library\/([a-z0-9-]+)/.exec(raw) || /^(?:https?:\/\/)?([a-z0-9-]+)\.(?:lib\.)?overdrive\.com/.exec(raw) || /^([a-z0-9-]+)$/.exec(raw);
+        if (!m) badInput.push(raw); else if (keys.indexOf(m[1]) < 0) keys.push(m[1]);
       });
+      if (!keys.length) { say('lib-status', 'That does not look like a library code or address.', true); return; }
+      var added = [], notFound = badInput.slice(), unreachable = [], i = 0;
+      busy(true);
+      (function nextLib() {
+        if (i >= keys.length) {
+          rebuildIndex(); route({ keepScroll: true });
+          say('lib-status', (added.length ? 'Added ' + added.join(', ') + '. ' : '') + (notFound.length ? 'No library uses: ' + notFound.join(', ') + '. ' : '') + (unreachable.length ? 'Could not reach the catalogue for: ' + unreachable.join(', ') + '. Check your connection and try those again.' : '') || 'Those libraries are already on your list.', !!(notFound.length || unreachable.length));
+          return;
+        }
+        var key = keys[i++];
+        say('lib-status', 'Looking up ' + key + ' (' + i + ' of ' + keys.length + ')…');
+        if (getLibs().some(function (l) { return l.key === key; })) { nextLib(); return; }
+        fetchText(SRC.libInfo(key), isJSON).then(function (txt) {
+          var d = JSON.parse(txt), k = String(d.preferredKey || d.id || key).toLowerCase(), libs = getLibs();
+          if (!libs.some(function (l) { return l.key === k; })) { libs.push({ key: k, name: String(d.name || k).slice(0, 120) }); store.set('libs', libs); added.push(String(d.name || k)); }
+        }, function (err) { (err && (err.status === 404 || err.status === 400) ? notFound : unreachable).push(key); }).then(function () { setTimeout(nextLib, GAP_MS); });
+      })();
     } else if (f === 'gr-link') {
       var uid = grUserId(e.target.gr.value);
       if (!uid) { say('gr-status', 'Paste the address of your Goodreads profile page. It contains a number, like /user/show/12345678.', true); return; }

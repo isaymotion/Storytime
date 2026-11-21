@@ -4,6 +4,14 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.0.3',
+    date: '2026-11-21',
+    title: 'Add several libraries at once',
+    items: [
+      { type: 'feature', text: 'My libraries: paste several library codes separated by commas and Storytime adds them all.', href: '#/libraries' }
+    ]
+  },
+  {
     version: '1.0.2',
     date: '2026-11-21',
     title: 'Clearer help for library codes',
