@@ -539,6 +539,9 @@
     libInfo: function (key) { return 'https://thunder.api.overdrive.com/v2/libraries/' + encodeURIComponent(key); },
     libSearch: function (key, q) { return 'https://thunder.api.overdrive.com/v2/libraries/' + encodeURIComponent(key) + '/media?query=' + encodeURIComponent(q) + '&perPage=24'; },
     libby: function (id) { return 'https://share.libbyapp.com/title/' + encodeURIComponent(id); },
+    /* Opens the Libby app itself (libbyapp.com links are handed to the app when it is installed): the title's own page when the
+       catalogue id is known, otherwise a search for the book at that library. */
+    libbyApp: function (key, q, id) { return 'https://libbyapp.com/search/' + encodeURIComponent(key) + '/search/query-' + encodeURIComponent(q) + '/page-1' + (id ? '/' + encodeURIComponent(id) : ''); },
     libSite: function (key, id) { return 'https://' + encodeURIComponent(key) + '.overdrive.com/media/' + encodeURIComponent(id); },
     grFeed: function (uid, shelf, page) { return 'https://www.goodreads.com/review/list_rss/' + encodeURIComponent(uid) + '?shelf=' + encodeURIComponent(shelf) + '&per_page=100&page=' + page; },
     grWidget: function (uid, shelf) { return 'https://www.goodreads.com/review/custom_widget/' + encodeURIComponent(uid) + '.Storytime?cover_position=left&cover_size=small&num_books=200&order=d&shelf=' + encodeURIComponent(shelf) + '&show_author=1&show_cover=0&show_rating=0&show_review=0&show_tags=0&show_title=1&sort=date_added&widget_id=1'; },
@@ -750,8 +753,7 @@
     return out;
   }
   function checkOne(book, lib) {
-    var q = mainTitle(book.title) + (book.author ? ' ' + surname(book.author) : '');
-    return fetchText(SRC.libSearch(lib.key, q), isJSON).then(function (txt) { return pickFormats(book, JSON.parse(txt).items); });
+    return fetchText(SRC.libSearch(lib.key, libbyQuery(book)), isJSON).then(function (txt) { return pickFormats(book, JSON.parse(txt).items); });
   }
   /* Best copy of each format across her libraries, and the book's overall colour. */
   function summarize(book, avail, libs) {
@@ -783,11 +785,20 @@
     var txt = c.s === 'now' ? 'borrow now' : waitText(c);
     return '<a class="av av--' + c.s + '" href="' + esc(SRC.libby(c.id)) + '" target="_blank" rel="noopener" title="Open in Libby">' + label + ' <small>' + esc(txt) + (showLib && c.lib ? ' · ' + esc(c.lib.name) : '') + '</small><span class="sr-only"> (opens in Libby)</span></a>';
   }
+  function libbyQuery(b) { return mainTitle(b.title) + (b.author ? ' ' + surname(b.author) : ''); }
+  /* One button per book: the best copy found (ebook first on a tie), or a Libby search at her first library if none is known yet. */
+  function libbyButton(b, s, libs) {
+    if (!libs.length) return '';
+    var best = rank(s.audiobook) < rank(s.ebook) ? s.audiobook : s.ebook, has = best && best.s !== 'none' && best.id;
+    var href = has ? SRC.libbyApp(best.lib.key, libbyQuery(b), best.id) : SRC.libbyApp(libs[0].key, libbyQuery(b));
+    return '<a class="btn libby-btn" href="' + esc(href) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Open in Libby app</a>';
+  }
   function bookRow(b, avail, libs) {
     var s = summarize(b, avail, libs);
     return '<div class="book book--' + s.overall + '" data-book="' + esc(b.id) + '">' +
       '<a class="book__main" href="#/book/' + esc(b.id) + '"><h3>' + esc(b.title) + '</h3><p>' + esc(b.author || 'Unknown author') + ' · <span class="book__st">' + ST_LABEL[s.overall] + '</span></p></a>' +
       (s.overall === 'unknown' ? '' : '<div class="book__fmts">' + pill('ebook', s.ebook, libs.length > 1) + pill('audiobook', s.audiobook, libs.length > 1) + '</div>') +
+      libbyButton(b, s, libs) +
     '</div>';
   }
 
@@ -950,6 +961,7 @@
         : '') + '<p class="legend"><span class="av av--' + s.overall + '">' + ST_LABEL[s.overall] + '</span></p>' +
       ((libs.length ? '<h2>At your libraries</h2>' + perLib + (when ? '<p class="muted">Last checked ' + esc(bkDate(new Date(when).toISOString())) + '.</p>' : '') : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') +
         '<div class="actions"><button type="button" class="btn" data-act="check-one" data-id="' + esc(b.id) + '"' + (libs.length ? '' : ' disabled') + '>Check this book</button></div><div id="chk">' + jobHTML() + '</div>') +
+      (libs.length ? '<div class="actions">' + libbyButton(b, s, libs) + '</div>' : '') +
       '<h2>Your shelf</h2><div class="actions">' +
         (done ? '<button type="button" class="btn" data-act="unfinish" data-id="' + esc(b.id) + '">Move back to my list</button>' + (b.local ? '' : '<a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>')
               : '<button type="button" class="btn btn--solid" data-act="finish" data-id="' + esc(b.id) + '">Mark as finished</button><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>') +

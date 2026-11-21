@@ -293,3 +293,5 @@ a.filter{display:inline-flex;align-items:center;min-height:44px;text-decoration:
 .libcard .book__fmts{margin:0 0 8px}
 form.card{padding:18px}
 .btn[disabled],.link-btn[disabled]{opacity:.5;cursor:default}
+.libby-btn{justify-self:start}
+.btn__ico{width:18px;height:18px;flex:none}
