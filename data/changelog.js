@@ -4,6 +4,14 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.3.1',
+    date: '2026-11-21',
+    title: 'Support Storytime',
+    items: [
+      { type: 'feature', text: 'Storytime stays free. If it helps you, there is now a “Support on Ko-fi” button on the home screen and the About page.', href: '#/about' }
+    ]
+  },
+  {
     version: '1.3.0',
     date: '2026-11-21',
     title: 'Covers, holds, shelves and sharing',
