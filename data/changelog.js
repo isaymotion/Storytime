@@ -4,6 +4,14 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.3.2',
+    date: '2026-11-21',
+    title: 'Support link on every page',
+    items: [
+      { type: 'update', text: 'The “Support this app on Ko-fi” link is now at the bottom of every page, the same as in the other isaymotion apps.' }
+    ]
+  },
+  {
     version: '1.3.1',
     date: '2026-11-21',
     title: 'Support Storytime',

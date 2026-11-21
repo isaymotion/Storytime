@@ -328,3 +328,7 @@ form.card{padding:18px}
 .support{margin-top:14px;padding:16px 18px}
 .support p{margin:0 0 12px;color:var(--ink-2)}
 .callout small{display:block;margin-top:8px}
+
+/* Ko-fi support link under the attribution line */
+.support-line{margin:0 0 10px}
+.support-line a{display:inline-flex;align-items:center;min-height:44px;color:inherit;font-weight:600;text-underline-offset:3px}

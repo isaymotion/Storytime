@@ -3,7 +3,7 @@ window.APP_META = {
   name: 'Storytime',
   short: 'Storytime',
   tagline: 'Your reading list, at your libraries',
-  version: '1.3.1',
+  version: '1.3.2',
   /* Support and shop links. Leave empty to hide them.
      kofi: her Ko-fi page address, e.g. 'https://ko-fi.com/yourname' (adds a Support card to Home and About).
      bookshopId: a Bookshop.org affiliate number (turns bookshop links into affiliate links, with a notice). */
