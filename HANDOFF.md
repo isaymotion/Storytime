@@ -1,4 +1,4 @@
-# Storytime handoff (21 Nov 2026, after v1.3.1)
+# Storytime handoff (21 Nov 2026, after v1.3.2)
 
 ## 1. Project and audience
 Storytime is a free web app for readers: bring in a Goodreads or StoryGraph list, add the libraries you use in Libby, see which books can be borrowed now, and open them in Libby. Built for Isabella Navarro, MD (first user and tester, on iPhone), then the public.
@@ -72,11 +72,11 @@ node -e "new (require('vm').Script)(require('fs').readFileSync('app/js/app.js','
 ## 6. Status
 | Area | State |
 |---|---|
-| v1.3.1 live on `main` | Done (pushed 21 Nov 2026; she added the repo to the session, so pushing works) |
+| v1.3.2 live on `main` | Done (pushed 21 Nov 2026; she added the repo to the session, so pushing works) |
 | Smart check, favourites, format choice (v1.2.0) | Built, mock-tested; not tried by her |
 | Covers, hold tracker, shelf/series filter, library value + renewal dates, red-book help, sharing, privacy page (v1.3.0) | Built, mock-tested; not tried by her. Real catalogue cover field (`covers.cover150Wide.href`) not verified against a live answer |
-| Ko-fi support card (v1.3.1) | Live on Home and About, `APP_META.kofi` = `https://ko-fi.com/isaymotion` |
-| Ko-fi on her other original apps | Done 21 Nov: footer link "♥ Support this app on Ko-fi" under the attribution line (`.support-line` in `index.html` + CSS, `kofi` in `data/app-meta.js`, patch version bump) in Tagalog/Usap Tayo 3.19.1, Hablemos 0.9.1, Japanese/Hanashimasho 1.1.1, MSEtrainer 6.0.1, LittleGarden 2.4.1. Not added to the textbook-based study apps (her decision: original apps first) |
+| Ko-fi support (v1.3.1, v1.3.2) | Card on Home and About, plus the same footer link as her other apps on every page (`.support-line` in `index.html`), `APP_META.kofi` = `https://ko-fi.com/isaymotion` |
+| Ko-fi on her other original apps | Done 21 Nov: footer link "♥ Support this app on Ko-fi" under the attribution line (`.support-line` in `index.html` + CSS, `kofi` in `data/app-meta.js`, patch version bump) plus a "Support on Ko-fi" card at the end of Home and About (`.support-card`; `supportCard()` in `js/views.js` for the three language apps and in `js/app.js` for MSEtrainer; static HTML in LittleGarden's `index.html` and `renderAbout`). Live versions: Tagalog/Usap Tayo 3.19.2, Hablemos 0.9.2, Japanese/Hanashimasho 1.1.2, MSEtrainer 6.0.2, LittleGarden 2.4.2. Checked in a test browser (light and dark), not on her phone. Not added to the textbook-based study apps (her decision: original apps first) |
 | Goodreads profile link (Want to Read, Currently Reading, Read) | Working for her (profile `57096661-chuu`) via a fallback route; which route is unknown |
 | Goodreads / StoryGraph CSV import, add by hand | Built, mock-tested; not tried by her |
 | Add libraries by code (several at once) | Built; 24 of her 25 codes verified against the catalogue |

@@ -146,6 +146,7 @@ with sync_playwright() as pw:
     pg.goto(B+'#/libraries'); pg.screenshot(path=OUT + '/libraries.png', full_page=True)
     pg.evaluate("() => { const e = document.querySelector('[data-exp=nypl]'); e.value = ''; e.dispatchEvent(new Event('change', {bubbles: true})); }")
     pg.goto(B+'#/privacy'); ok('saved in this browser only' in pg.inner_text('#main'), 'privacy page')
+    ok(pg.get_attribute('.site-foot .support-line a', 'href')=='https://ko-fi.com/isaymotion' and pg.evaluate("document.querySelector('.support-line a').getBoundingClientRect().height")>=44, 'Ko-fi link in the footer of every page')
     pg.goto(B+'#/books'); pg.wait_for_selector('.book')
     api = lambda: sum(1 for u in seen if 'thunder.api' in u)
     n0 = api(); pg.click('[data-act=check]'); pg.wait_for_timeout(500)
