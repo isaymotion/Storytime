@@ -4,6 +4,17 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.2.0',
+    date: '2026-11-21',
+    title: 'Faster checking with favourite libraries',
+    items: [
+      { type: 'feature', text: 'Check my libraries is much quicker: it looks in your favourite libraries first and stops looking for a book as soon as you can borrow it.', href: '#/books' },
+      { type: 'feature', text: 'My libraries: mark the libraries you use most as favourites, and choose ebooks only, audiobooks only or either.', href: '#/libraries' },
+      { type: 'update', text: '“Check every library” is still there when you want the full picture, for the whole list or for one book.', href: '#/books' },
+      { type: 'correction', text: 'A book is only marked red once every one of your libraries has answered.' }
+    ]
+  },
+  {
     version: '1.1.0',
     date: '2026-11-21',
     title: 'Find your library by name',

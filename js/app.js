@@ -558,10 +558,15 @@
   function getBooks() { return arr(store.get('books', [])); }
   function saveBooks(b) { store.set('books', b); rebuildIndex(); }
   function getLibs() { return arr(store.get('libs', [])); }
+  /* Favourite libraries first (in the order she added them), then the rest. Used wherever a library has to be picked or tried first. */
+  function prefLibs() { var l = getLibs(); return l.filter(function (x) { return x.fav; }).concat(l.filter(function (x) { return !x.fav; })); }
+  function wantedFormats() { var f = getSettings().fmt; return f === 'any' ? ['ebook', 'audiobook'] : [f]; }
+  /* Can a format she reads be borrowed right now, going by this one library's answer? */
+  function hasNow(r) { return !!r && !r.err && wantedFormats().some(function (f) { return r[f] && r[f].s === 'now'; }); }
   function getAvail() { var a = store.get('avail', {}); return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; }
   function getSettings() {
     var s = store.get('settings', {}) || {};
-    return { grUser: String(s.grUser || ''), relay: typeof s.relay === 'string' && RELAYS.indexOf(s.relay) < 0 ? s.relay : '' };
+    return { grUser: String(s.grUser || ''), relay: typeof s.relay === 'string' && RELAYS.indexOf(s.relay) < 0 ? s.relay : '', fmt: s.fmt === 'ebook' || s.fmt === 'audiobook' ? s.fmt : 'any' };
   }
   function setSetting(k, v) { var s = store.get('settings', {}) || {}; s[k] = v; store.set('settings', s); }
   function newId() { return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -757,9 +762,10 @@
   }
   /* Best copy of each format across her libraries, and the book's overall colour. */
   function summarize(book, avail, libs) {
-    var a = avail[book.id], out = { ebook: null, audiobook: null, overall: 'unknown', libsChecked: 0 };
+    var a = avail[book.id], out = { ebook: null, audiobook: null, overall: 'unknown', libsChecked: 0, complete: true };
     libs.forEach(function (l) {
       var r = a && a.by && a.by[l.key];
+      if (!r) out.complete = false;
       if (!r || r.err) return;
       out.libsChecked++;
       ['ebook', 'audiobook'].forEach(function (f) {
@@ -768,8 +774,8 @@
       });
     });
     if (out.libsChecked) {
-      var best = Math.min(rank(out.ebook), rank(out.audiobook));
-      out.overall = best === 0 ? 'now' : best < 9 ? 'wait' : 'none';
+      var best = Math.min.apply(null, wantedFormats().map(function (f) { return rank(out[f]); }));
+      out.overall = best === 0 ? 'now' : best < 9 ? 'wait' : out.complete ? 'none' : 'unknown';   // red only once every library has answered
     }
     return out;
   }
@@ -795,7 +801,7 @@
       var c = s[f];
       if (c && c.s !== 'none' && c.id) out += '<a class="btn libby-btn" href="' + esc(SRC.libbyApp(c.lib.key, q, c.id)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Open ' + f + ' in Libby app</a>';
     });
-    if (!out) out = '<a class="btn libby-btn" href="' + esc(SRC.libbyApp(libs[0].key, q)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Search in Libby app</a>';
+    if (!out) out = '<a class="btn libby-btn" href="' + esc(SRC.libbyApp((prefLibs()[0] || libs[0]).key, q)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Search in Libby app</a>';
     return '<div class="book__fmts">' + out + '</div>';
   }
   function bookRow(b, avail, libs) {
@@ -807,53 +813,69 @@
     '</div>';
   }
 
-  /* ----- the checker: two lookups at a time, a short pause after each, results saved as it goes ----- */
+  /* ----- the checker: two lookups at a time, a short pause after each, results saved as it goes.
+     Smart check (the default) goes book by book: the library that had it last time first, then favourites, then the rest,
+     and stops looking for that book as soon as a format she reads can be borrowed now. With many libraries this saves
+     most of the lookups. A full check (full = true) asks every library. ----- */
   var job = null, lastCheckNote = '';
   function listBooks() { return getBooks().filter(function (b) { return b.shelf !== 'read'; }); }
-  function startCheck(books, force) {
+  function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+  function startCheck(books, full) {
     if (job) return;
-    var libs = getLibs(), avail = getAvail(), now = Date.now(), tasks = [];
+    var libs = getLibs(), avail = getAvail(), now = Date.now(), plan = [];
+    function fresh(r) { return !!r && !r.err && now - (r.at || 0) <= STALE_MS; }
     books.forEach(function (b) {
-      libs.forEach(function (l) {
-        var r = avail[b.id] && avail[b.id].by && avail[b.id].by[l.key];
-        if (force || !r || r.err || now - (r.at || 0) > STALE_MS) tasks.push([b, l]);
-      });
+      var by = (avail[b.id] && avail[b.id].by) || {};
+      if (!full && libs.some(function (l) { return fresh(by[l.key]) && hasNow(by[l.key]); })) return;      // already known to be borrowable
+      var todo = libs.map(function (l, i) { return [hasNow(by[l.key]) ? 0 : l.fav ? 1 : 2, i, l]; })
+        .sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; }).map(function (x) { return x[2]; })
+        .filter(function (l) { return full || !fresh(by[l.key]); });
+      if (todo.length) plan.push({ b: b, libs: todo, i: 0 });
     });
-    if (!tasks.length) { lastCheckNote = 'Everything was checked in the last 6 hours. Use “Recheck everything” to look again now.'; paintJob(); return; }
-    job = { total: tasks.length, done: 0, failed: 0, blocked: false, stop: false, avail: avail };
+    if (!plan.length) { lastCheckNote = 'Everything was checked in the last 6 hours. Use “Check every library” to look again now.'; paintJob(); return; }
+    job = { total: plan.length, done: 0, looks: 0, failed: 0, saved: 0, blocked: false, stop: false, avail: avail };
     lastCheckNote = '';
-    var i = 0, active = 0;
+    var bi = 0, active = 0;
     function finish() {
       if (!job) return;
       var j = job; job = null;
       store.set('avail', j.avail);
       lastCheckNote = j.blocked
         ? 'Storytime could not reach the library catalogue. Check your connection, then see “If checks fail” on the Bring in a list screen.'
-        : 'Checked ' + j.done + (j.done === 1 ? ' listing' : ' listings') + (j.failed ? ', ' + j.failed + ' could not be reached' : '') + (j.stop ? ' (stopped early)' : '') + '.';
+        : 'Checked ' + plural(j.done, 'book', 'books') + ' (' + plural(j.looks, 'lookup', 'lookups') + ')' + (j.failed ? ', ' + j.failed + ' could not be reached' : '') + (j.stop ? ' (stopped early)' : '') + '.' +
+          (j.saved ? ' Skipped ' + plural(j.saved, 'lookup', 'lookups') + ' for books already found to borrow now.' : '');
       var k = currentKey();
       if (k === 'books' || k === 'home' || k === 'book' || k === 'finished') route({ keepScroll: true });
     }
-    function next() {
+    function lane() {
       if (!job) return;
-      if (job.stop || i >= tasks.length) { if (!active) finish(); return; }
-      var tsk = tasks[i++]; active++;
-      checkOne(tsk[0], tsk[1]).then(function (f) { return f; }, function () { job.failed++; return { err: true }; }).then(function (f) {
+      if (job.stop || bi >= plan.length) { if (!active) finish(); return; }
+      active++; step(plan[bi++]);
+    }
+    function step(p) {
+      if (job.stop || p.i >= p.libs.length) {
+        if (p.i >= p.libs.length) job.done++;
+        active--; paintJob(); lane(); return;
+      }
+      var lib = p.libs[p.i++];
+      checkOne(p.b, lib).then(function (f) { return f; }, function () { job.failed++; return { err: true }; }).then(function (f) {
         f.at = Date.now();
-        var a = job.avail[tsk[0].id] || (job.avail[tsk[0].id] = { by: {} });
-        if (!f.err || !a.by[tsk[1].key]) a.by[tsk[1].key] = f;       // a failed recheck keeps the older answer
-        active--; job.done++;
-        if (job.done >= 3 && job.failed === job.done) { job.stop = true; job.blocked = true; }
-        if (job.done % 8 === 0) store.set('avail', job.avail);
-        paintJob(); paintBook(tsk[0].id, job.avail);
-        setTimeout(next, GAP_MS);
+        var a = job.avail[p.b.id] || (job.avail[p.b.id] = { by: {} });
+        if (!f.err || !a.by[lib.key]) a.by[lib.key] = f;       // a failed recheck keeps the older answer
+        job.looks++;
+        if (job.looks >= 3 && job.failed === job.looks) { job.stop = true; job.blocked = true; }
+        if (job.looks % 8 === 0) store.set('avail', job.avail);
+        if (!full && hasNow(f)) { job.saved += p.libs.length - p.i; p.i = p.libs.length; }      // found: stop looking for this book
+        paintJob(); paintBook(p.b.id, job.avail);
+        setTimeout(function () { step(p); }, GAP_MS);
       });
     }
-    paintJob(); next(); setTimeout(next, GAP_MS / 2);
+    paintJob(); lane(); setTimeout(lane, GAP_MS / 2);
   }
   function jobHTML() {
     if (job) {
       var pct = Math.round(100 * job.done / job.total);
-      return '<p class="status-line">Checking ' + job.done + ' of ' + job.total + '… <button type="button" class="link-btn" data-act="stop">Stop</button></p><div class="meter__bar"><span style="width:' + pct + '%"></span></div>';
+      return '<p class="status-line">Checking book ' + Math.min(job.done + 1, job.total) + ' of ' + job.total + '… <button type="button" class="link-btn" data-act="stop">Stop</button></p><div class="meter__bar"><span style="width:' + pct + '%"></span></div>';
     }
     return lastCheckNote ? '<p class="status-line">' + esc(lastCheckNote) + '</p>' : '';
   }
@@ -882,9 +904,9 @@
     getBooks().forEach(function (b) { SEARCH_INDEX.push({ title: b.title, text: (b.author || '') + (b.shelf === 'read' ? ' · read' : ''), href: '#/book/' + b.id, kind: 'Book' }); });
     getLibs().forEach(function (l) { SEARCH_INDEX.push({ title: l.name, text: 'Library · ' + l.key, href: '#/libraries', kind: 'Library' }); });
     SEARCH_INDEX.push(
-      { title: 'My books', text: 'Reading list, borrow now, holds queue, availability, check my libraries', href: '#/books', kind: 'Screen' },
+      { title: 'My books', text: 'Reading list, borrow now, holds queue, availability, check my libraries, check every library', href: '#/books', kind: 'Screen' },
       { title: 'Read', text: 'Books you have read or finished, reread, availability, update Goodreads or StoryGraph, export', href: '#/finished', kind: 'Screen' },
-      { title: 'My libraries', text: 'Add or remove the libraries you use in Libby, find your library code, library code checker', href: '#/libraries', kind: 'Screen' },
+      { title: 'My libraries', text: 'Add or remove the libraries you use in Libby, find your library code, library code checker, favourite libraries, ebooks or audiobooks', href: '#/libraries', kind: 'Screen' },
       { title: 'Bring in a list', text: 'Goodreads profile link, Goodreads export, StoryGraph export, CSV, add a book, relay', href: '#/import', kind: 'Screen' });    bkPaint();   // keep the backup panel's count in step
   }
   rebuildIndex();
@@ -935,7 +957,7 @@
       return (ORDER[x.s.overall] - ORDER[y.s.overall]) || (Math.min(rank(x.s.ebook), rank(x.s.audiobook)) - Math.min(rank(y.s.ebook), rank(y.s.audiobook))) || norm(x.b.title).localeCompare(norm(y.b.title));
     });
     return head +
-      '<div class="actions"><button type="button" class="btn btn--solid" data-act="check"' + (libs.length ? '' : ' disabled') + '>Check my libraries</button><button type="button" class="link-btn" data-act="check-all"' + (libs.length ? '' : ' disabled') + '>Recheck everything</button></div>' +
+      '<div class="actions"><button type="button" class="btn btn--solid" data-act="check"' + (libs.length ? '' : ' disabled') + '>Check my libraries</button><button type="button" class="link-btn" data-act="check-all"' + (libs.length ? '' : ' disabled') + '>Check every library (slower)</button></div>' +
       '<div id="chk">' + jobHTML() + '</div>' + LEGEND +
       '<div class="filters" role="group" aria-label="Show">' + FILTERS.map(function (f) {
         var n = f[0] === 'all' ? rows.length : rows.filter(function (r) { return r.s.overall === f[0]; }).length;
@@ -955,7 +977,7 @@
     var libs = getLibs(), avail = getAvail(), s = summarize(b, avail, libs), a = avail[b.id], done = b.shelf === 'read';
     var perLib = libs.map(function (l) {
       var r = a && a.by && a.by[l.key];
-      return '<div class="card libcard"><h3>' + esc(l.name) + '</h3>' + (!r ? '<p class="muted">Not checked yet.</p>' : r.err ? '<p class="muted">Could not be reached last time.</p>' :
+      return '<div class="card libcard"><h3>' + esc(l.name) + '</h3>' + (!r ? '<p class="muted">Not checked yet' + (s.overall === 'now' ? ': a copy to borrow now was found first' : '') + '.</p>' : r.err ? '<p class="muted">Could not be reached last time.</p>' :
         '<div class="book__fmts">' + cell('ebook', r.ebook, l, b) + '</div><div class="book__fmts">' + cell('audiobook', r.audiobook, l, b) + '</div>') + '</div>';
     }).join('');
     var when = a && a.by ? Math.max.apply(null, Object.keys(a.by).map(function (k) { return a.by[k].at || 0; }).concat([0])) : 0;
@@ -965,7 +987,7 @@
           '<span class="actions"><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Open on Goodreads</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">Find on StoryGraph</a></span></div>'
         : '') + '<p class="legend"><span class="av av--' + s.overall + '">' + ST_LABEL[s.overall] + '</span></p>' +
       ((libs.length ? '<h2>At your libraries</h2>' + perLib + (when ? '<p class="muted">Last checked ' + esc(bkDate(new Date(when).toISOString())) + '.</p>' : '') : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') +
-        '<div class="actions"><button type="button" class="btn" data-act="check-one" data-id="' + esc(b.id) + '"' + (libs.length ? '' : ' disabled') + '>Check this book</button></div><div id="chk">' + jobHTML() + '</div>') +
+        '<div class="actions"><button type="button" class="btn" data-act="check-one" data-id="' + esc(b.id) + '"' + (libs.length ? '' : ' disabled') + '>Check every library for this book</button></div><div id="chk">' + jobHTML() + '</div>') +
       libbyButton(b, s, libs) +
       '<h2>Your shelf</h2><div class="actions">' +
         (done ? '<button type="button" class="btn" data-act="unfinish" data-id="' + esc(b.id) + '">Move back to my list</button>' + (b.local ? '' : '<a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>')
@@ -1076,11 +1098,14 @@
   main.addEventListener('submit', function (e) { if (e.target.getAttribute && e.target.getAttribute('data-form') === 'find-lib') e.preventDefault(); });
 
   VIEWS.libraries = function () {
-    var libs = getLibs();
-    return '<div class="wrap page"><header class="page__head"><h1>My libraries</h1><p>Add each library you have a card for in Libby. Storytime checks every book at all of them.</p></header>' +
+    var libs = prefLibs();
+    return '<div class="wrap page"><header class="page__head"><h1>My libraries</h1><p>Add each library you have a card for in Libby. Storytime looks in your favourites first and stops looking for a book once you can borrow it.</p></header>' +
       (libs.length ? libs.map(function (l) {
-        return '<div class="card libcard"><h3>' + esc(l.name) + '</h3><p class="muted">Code: ' + esc(l.key) + '</p><div class="actions"><a class="btn" href="https://libbyapp.com/library/' + esc(encodeURIComponent(l.key)) + '" target="_blank" rel="noopener">Open in Libby</a><button type="button" class="link-btn" data-act="lib-remove" data-id="' + esc(l.key) + '">Remove</button></div></div>';
+        return '<div class="card libcard"><h3>' + (l.fav ? '<span class="fav-star" aria-hidden="true">★ </span>' : '') + esc(l.name) + '</h3><p class="muted">Code: ' + esc(l.key) + (l.fav ? ' · Favourite, checked first' : '') + '</p><div class="actions">' +
+          '<button type="button" class="btn" data-act="lib-fav" data-id="' + esc(l.key) + '" aria-pressed="' + (l.fav ? 'true' : 'false') + '">' + (l.fav ? '★ Favourite' : '☆ Make favourite') + '</button><a class="btn" href="https://libbyapp.com/library/' + esc(encodeURIComponent(l.key)) + '" target="_blank" rel="noopener">Open in Libby</a><button type="button" class="link-btn" data-act="lib-remove" data-id="' + esc(l.key) + '">Remove</button></div></div>';
       }).join('') : '<div class="empty"><p>No libraries yet.</p></div>') +
+      '<h2>What you read</h2><div class="card">' + segGroup('fmt', 'Formats to look for', [['any', 'Either'], ['ebook', 'Ebooks only'], ['audiobook', 'Audiobooks only']], getSettings().fmt) +
+        '<p class="muted" style="margin:10px 0 0">A book turns green when this format can be borrowed now. Both formats are still shown on each book.</p></div>' +
       '<h2>Find your library</h2><form class="card" data-form="find-lib"><div class="field"><label for="lib-find">Library name, town or county</label>' +
         '<input id="lib-find" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search" placeholder="e.g. Seattle Public Library" value="' + esc(libQuery) + '">' +
         '<small>Shows each matching library with its Libby code. The first search downloads the list of libraries, which takes a few seconds.</small></div>' +
@@ -1145,6 +1170,11 @@
       var ls = getLibs(), nm = el.getAttribute('data-name') || id;
       if (/^[a-z0-9-]+$/.test(id) && !ls.some(function (l) { return l.key === id; })) { ls.push({ key: id, name: nm.slice(0, 120) }); store.set('libs', ls); rebuildIndex(); route({ keepScroll: true }); }
     }
+    else if (act === 'lib-fav') {
+      var fl = getLibs(); fl.forEach(function (l) { if (l.key === id) { if (l.fav) delete l.fav; else l.fav = true; } });
+      store.set('libs', fl); route({ keepScroll: true });
+      var again = main.querySelector('[data-act="lib-fav"][data-id="' + id + '"]'); if (again) again.focus();
+    }
     else if (act === 'lib-remove') {
       if (!window.confirm('Remove this library from Storytime?')) return;
       store.set('libs', getLibs().filter(function (l) { return l.key !== id; })); rebuildIndex(); route({ keepScroll: true });
@@ -1208,6 +1238,7 @@
     }
   });
   main.addEventListener('change', function (e) {
+    if (e.target && e.target.name === 'fmt') { setSetting('fmt', e.target.value); return; }
     if (!e.target || e.target.id !== 'csv-file') return;
     var file = e.target.files && e.target.files[0];
     if (!file) return;

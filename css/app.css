@@ -299,3 +299,7 @@ form.card{padding:18px}
 .found strong{display:block;font:600 .98rem/1.3 var(--sans)}
 .found small{color:var(--ink-3);font-size:.86rem}
 .field input[type="search"]{-webkit-appearance:none;appearance:none}
+
+/* v1.2.0: favourite libraries */
+.fav-star{color:var(--accent)}
+.btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
