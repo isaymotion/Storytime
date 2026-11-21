@@ -4,6 +4,21 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.3.0',
+    date: '2026-11-21',
+    title: 'Covers, holds, shelves and sharing',
+    items: [
+      { type: 'feature', text: 'Book covers on your list and on each book’s page.', href: '#/books' },
+      { type: 'feature', text: 'Hold tracker: after placing a hold in Libby, tap “I placed a hold” on the book’s page. Storytime shows where it is and roughly when to expect it.', href: '#/books/hold' },
+      { type: 'feature', text: 'Filter My books by your own Goodreads shelves, StoryGraph tags or a series. Books you are reading now stay on top.', href: '#/books' },
+      { type: 'feature', text: 'My libraries shows how many of your books each library has, and can remind you when a card needs renewing.', href: '#/libraries' },
+      { type: 'feature', text: 'Books none of your libraries has: how to ask for them in Libby, and a bookshop link.' },
+      { type: 'feature', text: 'Share a book, or your whole borrow-now list, as a message.', href: '#/books' },
+      { type: 'update', text: 'Each book’s page lists the library with the shortest wait first.' },
+      { type: 'update', text: 'New Privacy page and a short “How it works” on the first screen.', href: '#/privacy' }
+    ]
+  },
+  {
     version: '1.2.0',
     date: '2026-11-21',
     title: 'Faster checking with favourite libraries',

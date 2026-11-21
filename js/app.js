@@ -546,11 +546,18 @@
     grFeed: function (uid, shelf, page) { return 'https://www.goodreads.com/review/list_rss/' + encodeURIComponent(uid) + '?shelf=' + encodeURIComponent(shelf) + '&per_page=100&page=' + page; },
     grWidget: function (uid, shelf) { return 'https://www.goodreads.com/review/custom_widget/' + encodeURIComponent(uid) + '.Storytime?cover_position=left&cover_size=small&num_books=200&order=d&shelf=' + encodeURIComponent(shelf) + '&show_author=1&show_cover=0&show_rating=0&show_review=0&show_tags=0&show_title=1&sort=date_added&widget_id=1'; },
     grBook: function (b) { return b.grId ? 'https://www.goodreads.com/book/show/' + encodeURIComponent(b.grId) : 'https://www.goodreads.com/search?q=' + encodeURIComponent(b.isbn || (b.title + ' ' + (b.author || ''))); },
+    cover: function (isbn) { return 'https://covers.openlibrary.org/b/isbn/' + encodeURIComponent(isbn) + '-M.jpg?default=false'; },
+    /* Bookshop search; with APP_META.bookshopId (a Bookshop.org affiliate number) and an ISBN-13 it becomes her affiliate link. */
+    shop: function (b) {
+      var id = String(META.bookshopId || '').replace(/\D/g, '');
+      return id && /^97[89]\d{10}$/.test(b.isbn || '') ? 'https://bookshop.org/a/' + id + '/' + b.isbn : 'https://bookshop.org/search?keywords=' + encodeURIComponent(b.isbn || (mainTitle(b.title) + ' ' + (b.author || '')));
+    },
     sgBook: function (b) { return 'https://app.thestorygraph.com/browse?search_term=' + encodeURIComponent(b.isbn || (b.title + ' ' + (b.author || ''))); }
   };
 
   ICONS.check = '<path d="M5 12.5l4.5 4.5L19 7.5"/>';
   ICONS.library = '<path d="M3 20h18M5 20V10M9.5 20V10M14.5 20V10M19 20V10M3 10l9-6 9 6z"/>';
+  ICONS.heart = '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>';
   ICONS.download = '<path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/>';
 
   /* ----- stored data ----- */
@@ -585,6 +592,13 @@
     var p = String(a || '').split(',')[0].replace(/\b(jr|sr|ii|iii|phd|md)\.?$/i, '').trim().split(/\s+/);
     return p.length ? p[p.length - 1] : '';
   }
+  var NOT_TAGS = { 'to-read': 1, 'currently-reading': 1, 'read': 1, 'paused': 1, 'did-not-finish': 1 };
+  function cleanTags(v) {      // her own Goodreads shelves / StoryGraph tags, as a short tidy list
+    var seen = {}, out = [];
+    String(v || '').split(',').forEach(function (x) { x = x.trim().toLowerCase().slice(0, 40); if (x && !NOT_TAGS[x] && !seen[x] && out.length < 12) { seen[x] = 1; out.push(x); } });
+    return out;
+  }
+  function seriesOf(b) { var m = /\(([^()]+?),?\s*#\s*[\d.,\-–&\s]+\)\s*$/.exec(String(b.title || '')); return m ? m[1].trim() : ''; }      // "Title (Series, #2)"
   function bookKey(b) { return norm(mainTitle(b.title)) + '|' + norm(surname(b.author)); }
 
   /* ----- bringing a list in ----- */
@@ -598,10 +612,12 @@
         var ch = false;
         if (!cur.isbn && n.isbn) { cur.isbn = n.isbn; ch = true; }
         if (!cur.grId && n.grId) { cur.grId = n.grId; ch = true; }
+        if (n.tags && n.tags.length && String(cur.tags || '') !== String(n.tags)) { cur.tags = n.tags; ch = true; }
         if (!cur.local && n.shelf && cur.shelf !== n.shelf) { cur.shelf = n.shelf; cur.doneAt = n.doneAt || ''; ch = true; }   // never undo what she marked here
         if (ch) updated++;
       } else {
         var b = { id: newId(), title: String(n.title).slice(0, 300), author: String(n.author || '').slice(0, 200), isbn: n.isbn || '', grId: n.grId || '', shelf: n.shelf || 'want', source: source, doneAt: n.doneAt || '' };
+        if (n.tags && n.tags.length) b.tags = n.tags;
         books.push(b); byKey[bookKey(b)] = b; if (b.grId) byGr[b.grId] = b; added++;
       }
     });
@@ -632,14 +648,14 @@
     var cTitle = col('title'), cAuthor = col('author', 'authors'), cShelf = col('exclusive shelf', 'read status');
     if (cTitle < 0 || cShelf < 0) return null;
     var source = head.indexOf('read status') > -1 ? 'storygraph' : 'goodreads';
-    var cIsbn = col('isbn13', 'isbn/uid', 'isbn'), cGr = source === 'goodreads' ? col('book id') : -1, cDone = col('date read', 'last date read');
+    var cIsbn = col('isbn13', 'isbn/uid', 'isbn'), cGr = source === 'goodreads' ? col('book id') : -1, cDone = col('date read', 'last date read'), cTags = col('bookshelves', 'tags');
     var out = [], skipped = 0;
     rows.slice(1).forEach(function (r) {
       var shelf = SHELF_MAP[String(r[cShelf] || '').trim().toLowerCase()];
       if (!shelf || !String(r[cTitle] || '').trim()) { skipped++; return; }
       var isbn = cIsbn > -1 ? String(r[cIsbn] || '').replace(/[^0-9Xx]/g, '') : '';
       out.push({ title: r[cTitle].trim(), author: cAuthor > -1 ? String(r[cAuthor] || '').split(',')[0].trim() : '', isbn: isbn.length === 10 || isbn.length === 13 ? isbn : '',
-        grId: cGr > -1 ? String(r[cGr] || '').replace(/\D/g, '') : '', shelf: shelf, doneAt: shelf === 'read' && cDone > -1 ? String(r[cDone] || '').trim().replace(/\//g, '-') : '' });
+        grId: cGr > -1 ? String(r[cGr] || '').replace(/\D/g, '') : '', shelf: shelf, doneAt: shelf === 'read' && cDone > -1 ? String(r[cDone] || '').trim().replace(/\//g, '-') : '', tags: cTags > -1 ? cleanTags(r[cTags]) : [] });
     });
     return { source: source, books: out, skipped: skipped };
   }
@@ -687,7 +703,7 @@
       var items = doc.getElementsByTagName('item');
       for (var i = 0; i < items.length; i++) {
         var isbn = (tagText(items[i], 'isbn13') || tagText(items[i], 'isbn')).replace(/[^0-9Xx]/g, '');
-        acc.push({ title: tagText(items[i], 'title'), author: tagText(items[i], 'author_name'), isbn: isbn, grId: tagText(items[i], 'book_id').replace(/\D/g, ''), shelf: shelf });
+        acc.push({ title: tagText(items[i], 'title'), author: tagText(items[i], 'author_name'), isbn: isbn, grId: tagText(items[i], 'book_id').replace(/\D/g, ''), shelf: shelf, tags: cleanTags(tagText(items[i], 'user_shelves')) });
       }
       return items.length >= 100 && page < 10 ? fetchShelf(uid, grShelf, shelf, page + 1, acc) : acc;
     });
@@ -750,6 +766,7 @@
         var names = norm(it.firstCreatorName) + ' ' + arr(it.creators).map(function (c) { return norm(c && c.name); }).join(' ');
         if ((' ' + names + ' ').indexOf(' ' + sn + ' ') < 0) return;
       }
+      if (!out.cover) { var cv = it.covers && (it.covers.cover150Wide || it.covers.cover300Wide || it.covers.cover510Wide); if (cv && /^https:\/\//.test(cv.href || '')) out.cover = String(cv.href).slice(0, 300); }
       var cand = null;
       if (it.isAvailable) cand = { s: 'now', id: String(it.id), copies: it.availableCopies | 0 };
       else if ((it.ownedCopies | 0) > 0 || it.isHoldable === true) cand = { s: 'wait', id: String(it.id), holds: it.holdsCount | 0, days: typeof it.estimatedWaitDays === 'number' ? it.estimatedWaitDays : null };
@@ -804,10 +821,32 @@
     if (!out) out = '<a class="btn libby-btn" href="' + esc(SRC.libbyApp((prefLibs()[0] || libs[0]).key, q)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Search in Libby app</a>';
     return '<div class="book__fmts">' + out + '</div>';
   }
+  /* Cover: the library's own picture once the book has been checked, otherwise Open Library by ISBN, otherwise the title's first letter. */
+  function coverHTML(b, avail, big) {
+    var a = avail[b.id], u = a && /^https:\/\//.test(a.cover || '') ? a.cover : b.isbn ? SRC.cover(b.isbn) : '';
+    var letter = (norm(b.title).charAt(0) || '?').toUpperCase(), cls = 'book__cover' + (big ? ' book__cover--lg' : '');
+    return u ? '<img class="' + cls + '" src="' + esc(u) + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" data-ph="' + esc(letter) + '">'
+             : '<span class="' + cls + ' book__cover--none" aria-hidden="true">' + esc(letter) + '</span>';
+  }
+  main.addEventListener('error', function (e) {      // a cover that will not load becomes the letter tile
+    var t = e.target;
+    if (!t || t.tagName !== 'IMG' || !t.classList.contains('book__cover')) return;
+    var sp = document.createElement('span');
+    sp.className = t.className + ' book__cover--none'; sp.setAttribute('aria-hidden', 'true'); sp.textContent = t.getAttribute('data-ph') || '';
+    t.replaceWith(sp);
+  }, true);
+  /* Holds she says she placed (Storytime cannot place or read holds itself). */
+  function holdDue(h) {
+    if (!h || typeof h.days !== 'number' || !/^\d{4}-\d\d-\d\d$/.test(h.at || '')) return '';
+    var d = new Date(h.at + 'T12:00:00'); d.setDate(d.getDate() + h.days);
+    return fmtDate(d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()));
+  }
+  function holdText(b) { var due = holdDue(b.hold); return (FMT_LABEL[b.hold.fmt] || 'Book') + ' on hold at ' + b.hold.name + (due ? ', expected around ' + due : ''); }
   function bookRow(b, avail, libs) {
     var s = summarize(b, avail, libs);
     return '<div class="book book--' + s.overall + '" data-book="' + esc(b.id) + '">' +
-      '<a class="book__main" href="#/book/' + esc(b.id) + '"><h3>' + esc(b.title) + '</h3><p>' + esc(b.author || 'Unknown author') + ' · <span class="book__st">' + ST_LABEL[s.overall] + '</span></p></a>' +
+      '<a class="book__main" href="#/book/' + esc(b.id) + '">' + coverHTML(b, avail) + '<div class="book__txt"><h3>' + esc(b.title) + '</h3><p>' + esc(b.author || 'Unknown author') + ' · <span class="book__st">' + (b.shelf === 'reading' ? 'Reading now · ' : '') + ST_LABEL[s.overall] + '</span></p>' +
+        (b.hold ? '<p class="book__hold">' + esc(holdText(b)) + '</p>' : '') + '</div></a>' +
       (s.overall === 'unknown' ? '' : '<div class="book__fmts">' + pill('ebook', s.ebook, libs.length > 1, b) + pill('audiobook', s.audiobook, libs.length > 1, b) + '</div>') +
       libbyButton(b, s, libs) +
     '</div>';
@@ -861,6 +900,7 @@
       checkOne(p.b, lib).then(function (f) { return f; }, function () { job.failed++; return { err: true }; }).then(function (f) {
         f.at = Date.now();
         var a = job.avail[p.b.id] || (job.avail[p.b.id] = { by: {} });
+        if (f.cover) { if (!a.cover) a.cover = f.cover; delete f.cover; }      // one cover per book, not one per library
         if (!f.err || !a.by[lib.key]) a.by[lib.key] = f;       // a failed recheck keeps the older answer
         job.looks++;
         if (job.looks >= 3 && job.failed === job.looks) { job.stop = true; job.blocked = true; }
@@ -890,6 +930,56 @@
     if (b) el.outerHTML = bookRow(b, avail, getLibs());
   }
 
+  /* ----- sharing: the phone's share sheet, or the clipboard where there is none ----- */
+  function shareText(title, text) {
+    function copy() {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { say('share-status', 'Copied. Paste it into a message.'); }, function () { say('share-status', 'Could not copy on this device.', true); });
+      else say('share-status', 'Sharing is not available in this browser.', true);
+    }
+    if (navigator.share) navigator.share({ title: title, text: text }).then(function () {}, function (e) { if (!e || e.name !== 'AbortError') copy(); });
+    else copy();
+  }
+  function bestCopy(s) { var f = wantedFormats().slice().sort(function (x, y) { return rank(s[x]) - rank(s[y]); })[0]; return s[f] && s[f].s !== 'none' ? { fmt: f, c: s[f] } : null; }
+  function bookShare(b, s) {
+    var best = bestCopy(s), line = b.title + (b.author ? ' by ' + b.author : '');
+    if (best) line += '\n' + FMT_LABEL[best.fmt] + ': ' + (best.c.s === 'now' ? 'borrow now' : waitText(best.c)) + ' at ' + best.c.lib.name + '\n' + SRC.libbyApp(best.c.lib.key, libbyQuery(b), best.c.id);
+    else line += '\n' + SRC.grBook(b);
+    return line;
+  }
+  var APP_URL = 'https://isaymotion.github.io/Storytime/';
+  function listShare() {
+    var libs = getLibs(), avail = getAvail(), lines = [];
+    listBooks().forEach(function (b) { var s = summarize(b, avail, libs), best = bestCopy(s); if (s.overall === 'now' && best) lines.push('• ' + b.title + (b.author ? ' by ' + b.author : '') + ' (' + FMT_LABEL[best.fmt].toLowerCase() + ', ' + best.c.lib.name + ')'); });
+    if (!lines.length) return '';
+    return 'Books I can borrow right now:\n' + lines.slice(0, 40).join('\n') + (lines.length > 40 ? '\n…and ' + (lines.length - 40) + ' more' : '') + '\n\nFound with Storytime: ' + APP_URL;
+  }
+  /* ----- support link: shown only when APP_META.kofi holds her Ko-fi page address ----- */
+  function kofiURL() { var u = String(META.kofi || ''); return /^https:\/\/ko-fi\.com\/[A-Za-z0-9_-]+\/?$/.test(u) ? u : ''; }
+  function supportCard() {
+    var u = kofiURL();
+    return u ? '<div class="card support"><h3>Enjoying ' + esc(APP_NAME) + '?</h3><p>It is free, with no ads and no tracking. If it saves you time, you can buy me a coffee.</p><div class="actions"><a class="btn btn--solid" href="' + esc(u) + '" target="_blank" rel="noopener">' + icon('heart', 'btn__ico') + 'Support on Ko-fi</a></div></div>' : '';
+  }
+  AFTER.about = function () { var pg = main.querySelector('.page'), c = supportCard(); if (pg && c) pg.insertAdjacentHTML('beforeend', c); };
+  /* ----- library cards: renewal dates, and what each library is worth to this reading list ----- */
+  function daysTo(iso) { var m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(iso || ''); return m ? Math.round((new Date(+m[1], +m[2] - 1, +m[3]) - new Date(new Date().toDateString())) / 864e5) : null; }
+  function renewNote(l) { var d = daysTo(l.exp); return d == null || d > 30 ? '' : d < 0 ? 'Card renewal was due ' + fmtDate(l.exp) : d === 0 ? 'Card renewal is due today' : 'Card renewal due ' + fmtDate(l.exp) + ' (' + plural(d, 'day', 'days') + ')'; }
+  function libStats(libs, avail, books) {
+    var st = {}, fmts = wantedFormats();
+    libs.forEach(function (l) { st[l.key] = { checked: 0, held: 0, now: 0, only: 0 }; });
+    books.forEach(function (b) {
+      var by = (avail[b.id] && avail[b.id].by) || {}, holders = [], complete = true;
+      libs.forEach(function (l) {
+        var r = by[l.key];
+        if (!r) complete = false;
+        if (!r || r.err) return;
+        st[l.key].checked++;
+        if (fmts.some(function (f) { return r[f] && r[f].s !== 'none'; })) { st[l.key].held++; holders.push(l.key); if (hasNow(r)) st[l.key].now++; }
+      });
+      if (complete && holders.length === 1) st[holders[0]].only++;
+    });
+    return st;
+  }
+
   /* ----- screens ----- */
   NAV.splice(1, 1,
     { label: 'My books', href: '#/books', icon: 'book', group: 'Reading' },
@@ -897,7 +987,8 @@
     { label: 'My libraries', href: '#/libraries', icon: 'library', group: 'Set up' },
     { label: 'Bring in a list', href: '#/import', icon: 'download', group: 'Set up' }
   );
-  TITLES.books = 'My books'; TITLES.finished = 'Read'; TITLES.libraries = 'My libraries'; TITLES['import'] = 'Bring in a list'; TITLES.book = 'Book';
+  NAV.splice(NAV.length - 1, 0, { label: 'Privacy', href: '#/privacy', icon: 'info', group: 'App', tile: false });
+  TITLES.privacy = 'Privacy'; TITLES.books = 'My books'; TITLES.finished = 'Read'; TITLES.libraries = 'My libraries'; TITLES['import'] = 'Bring in a list'; TITLES.book = 'Book';
 
   function rebuildIndex() {
     SEARCH_INDEX.length = 0;
@@ -907,7 +998,8 @@
       { title: 'My books', text: 'Reading list, borrow now, holds queue, availability, check my libraries, check every library', href: '#/books', kind: 'Screen' },
       { title: 'Read', text: 'Books you have read or finished, reread, availability, update Goodreads or StoryGraph, export', href: '#/finished', kind: 'Screen' },
       { title: 'My libraries', text: 'Add or remove the libraries you use in Libby, find your library code, library code checker, favourite libraries, ebooks or audiobooks', href: '#/libraries', kind: 'Screen' },
-      { title: 'Bring in a list', text: 'Goodreads profile link, Goodreads export, StoryGraph export, CSV, add a book, relay', href: '#/import', kind: 'Screen' });    bkPaint();   // keep the backup panel's count in step
+      { title: 'Bring in a list', text: 'Goodreads profile link, Goodreads export, StoryGraph export, CSV, add a book, relay', href: '#/import', kind: 'Screen' },
+      { title: 'Privacy', text: 'What stays on this device, what is looked up, covers, relays, no accounts, no tracking', href: '#/privacy', kind: 'Screen' });    bkPaint();   // keep the backup panel's count in step
   }
   rebuildIndex();
 
@@ -920,47 +1012,64 @@
 
   VIEWS.home = function () {
     var books = listBooks(), libs = getLibs(), avail = getAvail(), c = counts(books, avail, libs);
-    var ready = books.length && libs.length;
+    var ready = books.length && libs.length, nHold = books.filter(function (b) { return b.hold; }).length;
+    var due = libs.map(renewNote).map(function (n, i) { return n ? '<li><strong>' + esc(libs[i].name) + ':</strong> ' + esc(n) + '</li>' : ''; }).join('');
     var body;
     if (!ready) {
       body = '<h2 class="home__h">Two steps to start</h2>' +
         '<a class="row" href="#/import"><span class="row__num">' + (books.length ? '✓' : '1') + '</span><span><h3>Bring in your reading list</h3><p>' + (books.length ? books.length + ' books on your list.' : 'From Goodreads or StoryGraph, or add books by hand.') + '</p></span><span></span></a><p></p>' +
-        '<a class="row" href="#/libraries"><span class="row__num">' + (libs.length ? '✓' : '2') + '</span><span><h3>Add your libraries</h3><p>' + (libs.length ? libs.length + (libs.length === 1 ? ' library added.' : ' libraries added.') : 'The same ones you use in Libby.') + '</p></span><span></span></a>';
+        '<a class="row" href="#/libraries"><span class="row__num">' + (libs.length ? '✓' : '2') + '</span><span><h3>Add your libraries</h3><p>' + (libs.length ? libs.length + (libs.length === 1 ? ' library added.' : ' libraries added.') : 'The same ones you use in Libby.') + '</p></span><span></span></a>' +
+        '<div class="card howto"><h3>How it works</h3><ol class="prose"><li>Storytime looks up each book at your libraries and colours it: green to borrow now, orange for a holds queue, red if no library has it.</li><li>Tap a green or orange button to open that book in the Libby app and borrow it or place a hold.</li><li>Everything stays on this phone. No account, no password.</li></ol></div>';
     } else {
       body = '<div class="stats">' +
           '<a class="stat stat--now" href="#/books/now"><strong>' + c.now + '</strong><span>Borrow now</span></a>' +
           '<a class="stat stat--wait" href="#/books/wait"><strong>' + c.wait + '</strong><span>Holds queue</span></a>' +
           '<a class="stat stat--none" href="#/books/none"><strong>' + c.none + '</strong><span>Not at your libraries</span></a>' +
           (c.unknown ? '<a class="stat" href="#/books/unknown"><strong>' + c.unknown + '</strong><span>Not checked yet</span></a>' : '') +
+          (nHold ? '<a class="stat stat--wait" href="#/books/hold"><strong>' + nHold + '</strong><span>On hold</span></a>' : '') +
         '</div>' +
         '<div class="actions"><button type="button" class="btn btn--solid" data-act="check">Check my libraries</button><a class="btn" href="#/books">See my books</a></div><div id="chk">' + jobHTML() + '</div>';
     }
     var latest = CHANGELOG[0];
     return '<section class="hero"><div class="wrap hero__inner"><h1>' + esc(APP_NAME) + '</h1>' +
         '<p class="hero__lead">Bring in your Goodreads or StoryGraph list, add the libraries you use in Libby, and see which books you can borrow right now.</p></div></section>' +
-      '<div class="wrap home">' + body +
+      '<div class="wrap home">' + (due ? '<div class="callout callout--caution"><p class="callout__title">Library card to renew</p><ul class="prose" style="margin:0;padding-left:1.2em">' + due + '</ul></div>' : '') + body +
         '<a class="card news-strip" href="#/whats-new"><span class="badge" data-badge="news" hidden></span><strong>' + esc(t('nav.whatsNew')) + '</strong>' +
-          (latest ? '<span class="muted">' + esc(tf('home.latest', { title: latest.title, version: latest.version })) + '</span>' : '') + '</a></div>';
+          (latest ? '<span class="muted">' + esc(tf('home.latest', { title: latest.title, version: latest.version })) + '</span>' : '') + '</a>' + supportCard() + '</div>';
   };
 
-  var FILTERS = [['all', 'All'], ['now', 'Borrow now'], ['wait', 'Holds queue'], ['none', 'Not at libraries'], ['unknown', 'Not checked']];
+  var FILTERS = [['all', 'All'], ['now', 'Borrow now'], ['wait', 'Holds queue'], ['hold', 'On hold'], ['none', 'Not at libraries'], ['unknown', 'Not checked']];
+  var groupFilter = '';      // 't:<her shelf or tag>' or 's:<series>'; kept while the app is open
+  function groupOptions(books) {
+    var tags = {}, ser = {};
+    books.forEach(function (b) { arr(b.tags).forEach(function (t) { tags[t] = (tags[t] || 0) + 1; }); var s = seriesOf(b); if (s) ser[s] = (ser[s] || 0) + 1; });
+    var o = Object.keys(tags).sort().map(function (t) { return ['t:' + t, t + ' (' + tags[t] + ')']; });
+    Object.keys(ser).sort().forEach(function (s) { if (ser[s] > 1) o.push(['s:' + s, 'Series: ' + s + ' (' + ser[s] + ')']); });
+    return o;
+  }
+  function inGroup(b) { var v = groupFilter.slice(2); return !groupFilter || (groupFilter.charAt(0) === 't' ? arr(b.tags).indexOf(v) > -1 : seriesOf(b) === v); }
   var ORDER = { now: 0, wait: 1, none: 2, unknown: 3 };
   VIEWS.books = function (filter) {
     var books = listBooks(), libs = getLibs(), avail = getAvail();
-    if (!ORDER.hasOwnProperty(filter)) filter = 'all';
+    if (!ORDER.hasOwnProperty(filter) && filter !== 'hold') filter = 'all';
+    var groups = groupOptions(books);
+    if (!groups.some(function (g) { return g[0] === groupFilter; })) groupFilter = '';
+    function inFilter(r, f) { return f === 'all' || (f === 'hold' ? !!r.b.hold : r.s.overall === f); }
     var head = '<div class="wrap page"><header class="page__head"><h1>My books</h1><p>' + books.length + (books.length === 1 ? ' book' : ' books') + ' to read, checked at ' + libs.length + (libs.length === 1 ? ' library' : ' libraries') + '. Tap a coloured button to open that book in Libby.</p></header>';
     if (!books.length) return head + '<div class="empty"><h2>No books yet</h2><p>Bring in your Goodreads or StoryGraph list, or add a book by hand.</p><p><a class="btn btn--solid" href="#/import">Bring in a list</a></p></div></div>';
     if (!libs.length) head += '<div class="callout"><p class="callout__title">Add a library</p>Storytime needs at least one library to check. <a href="#/libraries">Add your libraries</a>.</div>';
-    var rows = books.map(function (b) { return { b: b, s: summarize(b, avail, libs) }; });
-    var shown = rows.filter(function (r) { return filter === 'all' || r.s.overall === filter; });
+    var rows = books.filter(inGroup).map(function (b) { return { b: b, s: summarize(b, avail, libs) }; });
+    var shown = rows.filter(function (r) { return inFilter(r, filter); });
     shown.sort(function (x, y) {
-      return (ORDER[x.s.overall] - ORDER[y.s.overall]) || (Math.min(rank(x.s.ebook), rank(x.s.audiobook)) - Math.min(rank(y.s.ebook), rank(y.s.audiobook))) || norm(x.b.title).localeCompare(norm(y.b.title));
+      return ((x.b.shelf === 'reading' ? 0 : 1) - (y.b.shelf === 'reading' ? 0 : 1)) || (ORDER[x.s.overall] - ORDER[y.s.overall]) || (Math.min(rank(x.s.ebook), rank(x.s.audiobook)) - Math.min(rank(y.s.ebook), rank(y.s.audiobook))) || norm(x.b.title).localeCompare(norm(y.b.title));
     });
     return head +
-      '<div class="actions"><button type="button" class="btn btn--solid" data-act="check"' + (libs.length ? '' : ' disabled') + '>Check my libraries</button><button type="button" class="link-btn" data-act="check-all"' + (libs.length ? '' : ' disabled') + '>Check every library (slower)</button></div>' +
-      '<div id="chk">' + jobHTML() + '</div>' + LEGEND +
+      '<div class="actions"><button type="button" class="btn btn--solid" data-act="check"' + (libs.length ? '' : ' disabled') + '>Check my libraries</button><button type="button" class="link-btn" data-act="check-all"' + (libs.length ? '' : ' disabled') + '>Check every library (slower)</button><button type="button" class="link-btn" data-act="share-now">Share my borrow-now list</button></div>' +
+      '<div id="chk">' + jobHTML() + '</div><p class="status-line" id="share-status" role="status" aria-live="polite"></p>' + LEGEND +
+      (groups.length ? '<div class="field"><label for="grp">Shelf or series</label><select id="grp"><option value="">All my books</option>' + groups.map(function (g) { return '<option value="' + esc(g[0]) + '"' + (g[0] === groupFilter ? ' selected' : '') + '>' + esc(g[1]) + '</option>'; }).join('') + '</select></div>' : '') +
       '<div class="filters" role="group" aria-label="Show">' + FILTERS.map(function (f) {
-        var n = f[0] === 'all' ? rows.length : rows.filter(function (r) { return r.s.overall === f[0]; }).length;
+        var n = rows.filter(function (r) { return inFilter(r, f[0]); }).length;
+        if (f[0] === 'hold' && !n && filter !== 'hold') return '';
         return '<a class="filter" href="#/books/' + f[0] + '"' + (filter === f[0] ? ' aria-current="true"' : '') + '>' + f[1] + ' ' + n + '</a>';
       }).join('') + '</div>' +
       (shown.length ? shown.map(function (r) { return bookRow(r.b, avail, libs); }).join('') : '<div class="empty"><p>No books in this group.</p></div>') + '</div>';
@@ -969,26 +1078,36 @@
 
   function cell(fmt, c, lib, b) {
     if (!c || c.s === 'none') return '<span class="av av--none">' + FMT_LABEL[fmt] + ' <small>not held</small></span>';
-    return pill(fmt, c, false, b, lib) + ' <a class="cell-link" href="' + esc(SRC.libSite(lib.key, c.id)) + '" target="_blank" rel="noopener">Library website</a>';
+    var held = b.hold && b.hold.key === lib.key && b.hold.fmt === fmt;
+    return pill(fmt, c, false, b, lib) + ' <a class="cell-link" href="' + esc(SRC.libSite(lib.key, c.id)) + '" target="_blank" rel="noopener">Library website</a>' +
+      (c.s === 'wait' && b.shelf !== 'read' ? (held ? ' <span class="muted">Hold tracked</span>' : ' <button type="button" class="link-btn" data-act="hold" data-id="' + esc(b.id) + '" data-lib="' + esc(lib.key) + '" data-fmt="' + fmt + '">I placed a hold</button>') : '');
   }
   VIEWS.book = function (id) {
     var b = findBook(id);
     if (!b) return missingView();
     var libs = getLibs(), avail = getAvail(), s = summarize(b, avail, libs), a = avail[b.id], done = b.shelf === 'read';
-    var perLib = libs.map(function (l) {
-      var r = a && a.by && a.by[l.key];
+    function libRank(l) { var r = a && a.by && a.by[l.key]; return !r ? 30 : r.err ? 20 : Math.min.apply(null, wantedFormats().map(function (f) { return rank(r[f]); })); }
+    var perLib = libs.map(function (l, i) { return [libRank(l), i, l]; }).sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; }).map(function (x) {      // best library first
+      var l = x[2], r = a && a.by && a.by[l.key];
       return '<div class="card libcard"><h3>' + esc(l.name) + '</h3>' + (!r ? '<p class="muted">Not checked yet' + (s.overall === 'now' ? ': a copy to borrow now was found first' : '') + '.</p>' : r.err ? '<p class="muted">Could not be reached last time.</p>' :
         '<div class="book__fmts">' + cell('ebook', r.ebook, l, b) + '</div><div class="book__fmts">' + cell('audiobook', r.audiobook, l, b) + '</div>') + '</div>';
     }).join('');
     var when = a && a.by ? Math.max.apply(null, Object.keys(a.by).map(function (k) { return a.by[k].at || 0; }).concat([0])) : 0;
     return '<div class="wrap page"><p class="crumb"><a href="#/' + (done ? 'finished' : 'books') + '">' + (done ? 'Read' : 'My books') + '</a> / Book</p>' +
-      '<header class="page__head"><h1>' + esc(b.title) + '</h1><p>' + esc(b.author || 'Unknown author') + (done ? ' · Read' + (b.doneAt ? ' ' + esc(b.doneAt) : '') : '') + '</p></header>' +
+      '<header class="page__head bookhead">' + coverHTML(b, avail, true) + '<div><h1>' + esc(b.title) + '</h1><p>' + esc(b.author || 'Unknown author') + (done ? ' · Read' + (b.doneAt ? ' ' + esc(b.doneAt) : '') : b.shelf === 'reading' ? ' · Reading now' : '') + '</p>' +
+        (arr(b.tags).length ? '<p class="muted tags">' + esc(b.tags.join(' · ')) + '</p>' : '') + '</div></header>' +
+      (b.hold && !done ? '<div class="callout"><p class="callout__title">On hold</p>' + esc(holdText(b)) + '. Placed ' + esc(fmtDate(b.hold.at)) + '. <span class="actions"><button type="button" class="btn" data-act="hold-clear" data-id="' + esc(b.id) + '">Hold arrived or cancelled</button></span></div>' : '') +
       (done && b.local ? '<div class="callout callout--good"><p class="callout__title">Finished</p>Goodreads and StoryGraph do not let other apps change your shelves, so update them with one tap each: ' +
           '<span class="actions"><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Open on Goodreads</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">Find on StoryGraph</a></span></div>'
         : '') + '<p class="legend"><span class="av av--' + s.overall + '">' + ST_LABEL[s.overall] + '</span></p>' +
+      (s.overall === 'none' && !done ? '<div class="callout callout--caution"><p class="callout__title">None of your libraries has this yet</p>In Libby, search for the book and tap <strong>Notify Me</strong>: your library sees the request, and Libby tells you if they buy it. Or look for a copy to buy.' +
+          '<span class="actions"><a class="btn" href="' + esc(SRC.shop(b)) + '" target="_blank" rel="noopener">' + icon('external', 'btn__ico') + 'Find at a bookshop</a></span>' +
+          (META.bookshopId ? '<small class="muted">Storytime may earn a small commission if you buy through this link.</small>' : '') + '</div>' : '') +
       ((libs.length ? '<h2>At your libraries</h2>' + perLib + (when ? '<p class="muted">Last checked ' + esc(bkDate(new Date(when).toISOString())) + '.</p>' : '') : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') +
         '<div class="actions"><button type="button" class="btn" data-act="check-one" data-id="' + esc(b.id) + '"' + (libs.length ? '' : ' disabled') + '>Check every library for this book</button></div><div id="chk">' + jobHTML() + '</div>') +
+      (libs.length && !done ? '<p class="muted">Storytime cannot place holds for you. Place the hold in Libby, then tap “I placed a hold” next to that library to keep track of it here.</p>' : '') +
       libbyButton(b, s, libs) +
+      '<div class="actions"><button type="button" class="btn" data-act="share-book" data-id="' + esc(b.id) + '">Share this book</button></div><p class="status-line" id="share-status" role="status" aria-live="polite"></p>' +
       '<h2>Your shelf</h2><div class="actions">' +
         (done ? '<button type="button" class="btn" data-act="unfinish" data-id="' + esc(b.id) + '">Move back to my list</button>' + (b.local ? '' : '<a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>')
               : '<button type="button" class="btn btn--solid" data-act="finish" data-id="' + esc(b.id) + '">Mark as finished</button><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>') +
@@ -1098,22 +1217,40 @@
   main.addEventListener('submit', function (e) { if (e.target.getAttribute && e.target.getAttribute('data-form') === 'find-lib') e.preventDefault(); });
 
   VIEWS.libraries = function () {
-    var libs = prefLibs();
+    var libs = prefLibs(), st = libStats(libs, getAvail(), listBooks());
     return '<div class="wrap page"><header class="page__head"><h1>My libraries</h1><p>Add each library you have a card for in Libby. Storytime looks in your favourites first and stops looking for a book once you can borrow it.</p></header>' +
       (libs.length ? libs.map(function (l) {
-        return '<div class="card libcard"><h3>' + (l.fav ? '<span class="fav-star" aria-hidden="true">★ </span>' : '') + esc(l.name) + '</h3><p class="muted">Code: ' + esc(l.key) + (l.fav ? ' · Favourite, checked first' : '') + '</p><div class="actions">' +
+        return '<div class="card libcard"><h3>' + (l.fav ? '<span class="fav-star" aria-hidden="true">★ </span>' : '') + esc(l.name) + '</h3><p class="muted">Code: ' + esc(l.key) + (l.fav ? ' · Favourite, checked first' : '') + '</p>' +
+          (function (x, note) {
+            return '<p class="libworth">' + (x.checked ? 'Has ' + x.held + ' of the ' + plural(x.checked, 'book', 'books') + ' checked here' + (x.now ? ', ' + x.now + ' to borrow now' : '') + '.' + (x.only ? ' ' + plural(x.only, 'book is', 'books are') + ' at this library only.' : '') : 'No books checked here yet.') + '</p>' +
+              (note ? '<p class="libwarn">' + esc(note) + '</p>' : '');
+          })(st[l.key], renewNote(l)) +
+          '<details class="libmore"><summary>Card renewal date' + (l.exp ? ': ' + esc(fmtDate(l.exp)) : '') + '</summary><div class="field"><label for="exp-' + esc(l.key) + '">When this card needs renewing (optional)</label><input type="date" id="exp-' + esc(l.key) + '" data-exp="' + esc(l.key) + '" value="' + esc(l.exp || '') + '"><small>Storytime reminds you on the home screen 30 days before.</small></div></details>' +
+          '<div class="actions">' +
           '<button type="button" class="btn" data-act="lib-fav" data-id="' + esc(l.key) + '" aria-pressed="' + (l.fav ? 'true' : 'false') + '">' + (l.fav ? '★ Favourite' : '☆ Make favourite') + '</button><a class="btn" href="https://libbyapp.com/library/' + esc(encodeURIComponent(l.key)) + '" target="_blank" rel="noopener">Open in Libby</a><button type="button" class="link-btn" data-act="lib-remove" data-id="' + esc(l.key) + '">Remove</button></div></div>';
-      }).join('') : '<div class="empty"><p>No libraries yet.</p></div>') +
+      }).join('') + '<p class="muted">The counts cover the books checked at each library so far. Use “Check every library” on My books for the full picture of which cards are worth keeping.</p>' : '<div class="empty"><p>No libraries yet.</p></div>') +
       '<h2>What you read</h2><div class="card">' + segGroup('fmt', 'Formats to look for', [['any', 'Either'], ['ebook', 'Ebooks only'], ['audiobook', 'Audiobooks only']], getSettings().fmt) +
         '<p class="muted" style="margin:10px 0 0">A book turns green when this format can be borrowed now. Both formats are still shown on each book.</p></div>' +
       '<h2>Find your library</h2><form class="card" data-form="find-lib"><div class="field"><label for="lib-find">Library name, town or county</label>' +
         '<input id="lib-find" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search" placeholder="e.g. Seattle Public Library" value="' + esc(libQuery) + '">' +
-        '<small>Shows each matching library with its Libby code. The first search downloads the list of libraries, which takes a few seconds.</small></div>' +
+        '<small>Shows each matching library with its Libby code. The first search downloads the list of all libraries, which can take a few minutes; you can search while it loads, and later searches are instant.</small></div>' +
         '<div id="lib-results">' + finderHTML() + '</div></form>' +
       '<h2>Add by code</h2><form class="card" data-form="add-lib"><div class="field"><label for="lib-in">Library codes or web addresses</label>' +
         '<input id="lib-in" name="lib" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="e.g. nypl, brooklyn" required>' +
         '<small>The code is the first part of your library’s OverDrive web address, <strong>code</strong>.overdrive.com. It is usually a short form of the name: New York Public Library is <strong>nypl</strong>, Brooklyn Public Library is <strong>brooklyn</strong>. Several at once is fine: separate them with commas. Not sure of one? Search the web for your library’s name plus “OverDrive” and paste the address here.</small></div>' +
         '<div class="actions"><button type="submit" class="btn btn--solid">Add library</button></div><p class="status-line" id="lib-status" role="status" aria-live="polite"></p></form></div>';
+  };
+
+  VIEWS.privacy = function () {
+    return '<div class="wrap page"><header class="page__head"><h1>Privacy</h1><p>The short version: your reading list stays with you.</p></header><div class="prose">' +
+      '<h2>What stays on this device</h2><p>Your books, libraries, favourites, holds, card renewal dates and settings are saved in this browser only. There is no account, no password and no Storytime server, and nothing is tracked or sold. The backup file you can save from the menu is yours to keep.</p>' +
+      '<h2>What is looked up</h2><ul><li><strong>Library catalogues:</strong> to check a book, Storytime asks the public OverDrive catalogue of each of your libraries for that title. The catalogue sees the title and your internet address, like any website you visit. It does not see your library card.</li>' +
+      '<li><strong>Goodreads:</strong> if you link your profile, Storytime reads your public shelves. Goodreads refuses requests from web pages, so this goes through a relay (a small service that fetches the public page). A relay sees which public shelf is read, nothing else. You can use the export file instead and skip this entirely.</li>' +
+      '<li><strong>Covers:</strong> cover pictures come from your library’s catalogue or from Open Library, which see which cover was asked for.</li>' +
+      '<li><strong>Fonts:</strong> the lettering is loaded from Google Fonts.</li></ul>' +
+      '<h2>Links that leave Storytime</h2><p>Buttons that open Libby, Goodreads, StoryGraph, a library website, a bookshop or Ko-fi take you to those services, which have their own privacy rules.' + (META.bookshopId ? ' Bookshop links may earn Storytime a small commission.' : '') + '</p>' +
+      '<h2>Removing your data</h2><p>“Remove all books” on the Bring in a list screen clears your list. Deleting the app or clearing this site’s data in your browser removes everything.</p>' +
+      '<p class="muted">Storytime is an independent tool and is not affiliated with Goodreads, Libby, OverDrive or The StoryGraph. Questions: <a href="mailto:isaymotion@gmail.com">isaymotion@gmail.com</a></p></div></div>';
   };
 
   VIEWS['import'] = function () {
@@ -1158,7 +1295,15 @@
     else if (act === 'check-all') startCheck(listBooks(), true);
     else if (act === 'check-one') { var one = findBook(id); if (one) startCheck([one], true); }
     else if (act === 'stop') { if (job) job.stop = true; }
-    else if (act === 'finish') { updateBook(id, function (b) { b.shelf = 'read'; b.doneAt = today(); b.local = true; }); route({ keepScroll: true }); }
+    else if (act === 'hold') {
+      var hk = el.getAttribute('data-lib'), hf = el.getAttribute('data-fmt') === 'audiobook' ? 'audiobook' : 'ebook';
+      var hl = getLibs().filter(function (l) { return l.key === hk; })[0], ha = getAvail()[id], hc = ha && ha.by && ha.by[hk] && ha.by[hk][hf];
+      if (hl) { updateBook(id, function (b) { b.hold = { key: hk, name: hl.name, fmt: hf, at: today(), days: hc && typeof hc.days === 'number' ? hc.days : null }; }); route({ keepScroll: true }); }
+    }
+    else if (act === 'hold-clear') { updateBook(id, function (b) { delete b.hold; }); route({ keepScroll: true }); }
+    else if (act === 'share-book') { var sb = findBook(id); if (sb) shareText(sb.title, bookShare(sb, summarize(sb, getAvail(), getLibs()))); }
+    else if (act === 'share-now') { var txt = listShare(); if (txt) shareText('Books I can borrow now', txt); else say('share-status', 'No books to borrow right now. Check your libraries first.'); }
+    else if (act === 'finish') { updateBook(id, function (b) { b.shelf = 'read'; b.doneAt = today(); b.local = true; delete b.hold; }); route({ keepScroll: true }); }
     else if (act === 'unfinish') { updateBook(id, function (b) { b.shelf = 'want'; b.doneAt = ''; b.local = true; }); route({ keepScroll: true }); }
     else if (act === 'remove') {
       if (!window.confirm('Remove this book from Storytime? Your Goodreads and StoryGraph shelves are not touched.')) return;
@@ -1239,6 +1384,13 @@
   });
   main.addEventListener('change', function (e) {
     if (e.target && e.target.name === 'fmt') { setSetting('fmt', e.target.value); return; }
+    if (e.target && e.target.id === 'grp') { groupFilter = e.target.value; route({ keepScroll: true }); var g = document.getElementById('grp'); if (g) g.focus(); return; }
+    var ek = e.target && e.target.getAttribute && e.target.getAttribute('data-exp');
+    if (ek) {
+      var ev = /^\d{4}-\d\d-\d\d$/.test(e.target.value) ? e.target.value : '', el2 = getLibs();
+      el2.forEach(function (l) { if (l.key === ek) { if (ev) l.exp = ev; else delete l.exp; } });
+      store.set('libs', el2); return;
+    }
     if (!e.target || e.target.id !== 'csv-file') return;
     var file = e.target.files && e.target.files[0];
     if (!file) return;
