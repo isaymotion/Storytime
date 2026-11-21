@@ -529,7 +529,9 @@
   /* ===== STORYTIME =====
      Books, libraries and availability all live in this browser (store, under PREFIX), so the backup panel covers them.
      Nothing is sent anywhere except: the library catalogue lookups below, and the Goodreads shelf feed if she links one. */
-  var DEFAULT_RELAY = 'https://api.allorigins.win/raw?url=';
+  /* Public relays, tried in order after her own (if she set one). Any of them can be down on a given day. */
+  var RELAYS = ['https://api.allorigins.win/raw?url=', 'https://api.codetabs.com/v1/proxy/?quest=', 'https://corsproxy.io/?url='];
+  var NET_TIMEOUT = 12000;
   var STALE_MS = 6 * 3600 * 1000;      // availability older than this is rechecked by "Check my libraries"
   var GAP_MS = 250;                    // pause between catalogue lookups: stay polite to the library servers
   /* Every outside address in one place, so a change on their side is a one-line fix here. */
@@ -539,6 +541,7 @@
     libby: function (id) { return 'https://share.libbyapp.com/title/' + encodeURIComponent(id); },
     libSite: function (key, id) { return 'https://' + encodeURIComponent(key) + '.overdrive.com/media/' + encodeURIComponent(id); },
     grFeed: function (uid, shelf, page) { return 'https://www.goodreads.com/review/list_rss/' + encodeURIComponent(uid) + '?shelf=' + encodeURIComponent(shelf) + '&per_page=100&page=' + page; },
+    grWidget: function (uid, shelf) { return 'https://www.goodreads.com/review/custom_widget/' + encodeURIComponent(uid) + '.Storytime?cover_position=left&cover_size=small&num_books=200&order=d&shelf=' + encodeURIComponent(shelf) + '&show_author=1&show_cover=0&show_rating=0&show_review=0&show_tags=0&show_title=1&sort=date_added&widget_id=1'; },
     grBook: function (b) { return b.grId ? 'https://www.goodreads.com/book/show/' + encodeURIComponent(b.grId) : 'https://www.goodreads.com/search?q=' + encodeURIComponent(b.isbn || (b.title + ' ' + (b.author || ''))); },
     sgBook: function (b) { return 'https://app.thestorygraph.com/browse?search_term=' + encodeURIComponent(b.isbn || (b.title + ' ' + (b.author || ''))); }
   };
@@ -555,7 +558,7 @@
   function getAvail() { var a = store.get('avail', {}); return a && typeof a === 'object' && !Array.isArray(a) ? a : {}; }
   function getSettings() {
     var s = store.get('settings', {}) || {};
-    return { grUser: String(s.grUser || ''), relay: typeof s.relay === 'string' ? s.relay : DEFAULT_RELAY };
+    return { grUser: String(s.grUser || ''), relay: typeof s.relay === 'string' && RELAYS.indexOf(s.relay) < 0 ? s.relay : '' };
   }
   function setSetting(k, v) { var s = store.get('settings', {}) || {}; s[k] = v; store.set('settings', s); }
   function newId() { return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -639,21 +642,38 @@
   }
 
   /* ----- network: straight to the site first; if the browser is refused, once more through the relay in Settings ----- */
-  var directBlocked = {};
-  function fetchText(u) {
+  var directBlocked = {}, relayStart = 0;
+  function timedFetch(u) {
+    var ctl = window.AbortController ? new AbortController() : null, timer = ctl ? setTimeout(function () { ctl.abort(); }, NET_TIMEOUT) : 0;
+    return fetch(u, { credentials: 'omit', signal: ctl ? ctl.signal : undefined }).then(function (res) {
+      if (!res.ok) { var e = new Error('http ' + res.status); e.status = res.status; throw e; }
+      return res.text();
+    }).then(function (txt) { clearTimeout(timer); return txt; }, function (err) { clearTimeout(timer); throw err; });
+  }
+  /* valid(text) says whether the answer is the real thing: relays sometimes return an error page with a 200. */
+  function fetchText(u, valid) {
     var host = u.split('/')[2];
-    function ok(res) { if (!res.ok) { var e = new Error('http ' + res.status); e.status = res.status; throw e; } return res.text(); }
+    function check(txt) { if (valid && !valid(txt)) { var e = new Error('invalid'); e.invalid = true; throw e; } return txt; }
     function viaRelay() {
-      var r = getSettings().relay;
-      if (!/^https:\/\//.test(r)) { var e = new Error('blocked'); e.blocked = true; return Promise.reject(e); }
-      return fetch(r + encodeURIComponent(u), { credentials: 'omit' }).then(ok, function () { var e2 = new Error('blocked'); e2.blocked = true; throw e2; });
+      var own = getSettings().relay, list = (/^https:\/\//.test(own) ? [own] : []).concat(RELAYS.slice(relayStart), RELAYS.slice(0, relayStart)), i = 0;
+      function attempt() {
+        if (i >= list.length) { var e = new Error('blocked'); e.blocked = true; return Promise.reject(e); }
+        var r = list[i++];
+        return timedFetch(r + encodeURIComponent(u)).then(check).then(function (txt) {
+          var at = RELAYS.indexOf(r); if (at > -1) relayStart = at;      // start with the one that worked next time
+          return txt;
+        }, attempt);
+      }
+      return attempt();
     }
     if (directBlocked[host]) return viaRelay();
-    return fetch(u, { credentials: 'omit' }).then(ok, function () { directBlocked[host] = true; return viaRelay(); });
+    return timedFetch(u).then(check, function (err) { if (err && err.status) throw err; directBlocked[host] = true; return viaRelay(); });
   }
+  function isJSON(txt) { try { JSON.parse(txt); return true; } catch (e) { return false; } }
+  function isFeed(txt) { return /<rss[\s>]/i.test(txt) && /<channel[\s>]/i.test(txt); }
   function tagText(el, tag) { var n = el.getElementsByTagName(tag)[0]; return n ? String(n.textContent || '').trim() : ''; }
   function fetchShelf(uid, grShelf, shelf, page, acc) {
-    return fetchText(SRC.grFeed(uid, grShelf, page)).then(function (xml) {
+    return fetchText(SRC.grFeed(uid, grShelf, page), isFeed).then(function (xml) {
       var doc = new DOMParser().parseFromString(xml, 'text/xml');
       if (doc.getElementsByTagName('parsererror').length || !doc.getElementsByTagName('channel').length) { var e = new Error('feed'); e.feed = true; throw e; }
       var items = doc.getElementsByTagName('item');
@@ -664,11 +684,48 @@
       return items.length >= 100 && page < 10 ? fetchShelf(uid, grShelf, shelf, page + 1, acc) : acc;
     });
   }
+  /* Second route: Goodreads' own embeddable shelf widget, which is meant to be loaded by other websites.
+     It runs inside a sandboxed frame (no access to this app or its saved data) and only its HTML is handed back. */
+  function widgetShelf(uid, grShelf, shelf) {
+    return new Promise(function (resolve, reject) {
+      var token = 'st' + Math.random().toString(36).slice(2), frame = document.createElement('iframe'), done = false;
+      function finish(err, list) {
+        if (done) return; done = true;
+        clearTimeout(timer); window.removeEventListener('message', onMsg); frame.remove();
+        if (err) reject(err); else resolve(list);
+      }
+      function onMsg(e) {
+        if (e.source !== frame.contentWindow || !e.data || e.data.st !== token) return;
+        var doc = new DOMParser().parseFromString(String(e.data.html || ''), 'text/html'), out = [];
+        var rows = doc.querySelectorAll('[class^="gr_custom_each_container"]');
+        for (var i = 0; i < rows.length; i++) {
+          var tl = rows[i].querySelector('[class^="gr_custom_title"]'), au = rows[i].querySelector('[class^="gr_custom_author"]');
+          var title = tl ? String(tl.textContent || '').trim() : '';
+          if (title) out.push({ title: title, author: au ? String(au.textContent || '').replace(/^\s*by\s+/i, '').trim() : '', shelf: shelf });
+        }
+        if (!e.data.ok || (!out.length && !/gr_custom_container/.test(String(e.data.html)))) { var er = new Error('widget'); er.feed = true; finish(er); } else finish(null, out);
+      }
+      var timer = setTimeout(function () { var er = new Error('blocked'); er.blocked = true; finish(er); }, NET_TIMEOUT + 3000);
+      window.addEventListener('message', onMsg);
+      frame.setAttribute('sandbox', 'allow-scripts'); frame.setAttribute('aria-hidden', 'true'); frame.tabIndex = -1;
+      frame.style.cssText = 'position:absolute;width:1px;height:1px;border:0;opacity:0;pointer-events:none';
+      frame.srcdoc = '<!doctype html><div id="gr_custom_widget_1"></div><script>function done(ok){var d=document.getElementById("gr_custom_widget_1");parent.postMessage({st:"' + token + '",ok:ok,html:(d&&d.innerHTML)||document.body.innerHTML},"*")}<\/script>' +
+        '<script src="' + esc(SRC.grWidget(uid, grShelf)) + '" onload="done(true)" onerror="done(false)"><\/script>';
+      document.body.appendChild(frame);
+    });
+  }
   function refreshGoodreads(uid) {
     var acc = [];
     return fetchShelf(uid, 'to-read', 'want', 1, acc)
-      .then(function () { return fetchShelf(uid, 'currently-reading', 'reading', 1, acc); })
-      .then(function () { return mergeBooks(acc, 'goodreads'); });
+      .then(function () { return fetchShelf(uid, 'currently-reading', 'reading', 1, acc).catch(function () { return acc; }); })
+      .then(function () { return fetchShelf(uid, 'read', 'read', 1, acc).catch(function () { return acc; }); })
+      .then(function () { var r = mergeBooks(acc, 'goodreads'); r.via = 'feed'; return r; }, function (feedErr) {
+        var got = [];
+        return widgetShelf(uid, 'to-read', 'want')
+          .then(function (l) { got = got.concat(l); return widgetShelf(uid, 'currently-reading', 'reading').catch(function () { return []; }); })
+          .then(function (l) { got = got.concat(l); return widgetShelf(uid, 'read', 'read').catch(function () { return []; }); })
+          .then(function (l) { var r = mergeBooks(got.concat(l), 'goodreads'); r.via = 'widget'; r.count = got.length + l.length; return r; }, function (wErr) { throw wErr && wErr.feed ? wErr : feedErr; });
+      });
   }
 
   /* ----- availability ----- */
@@ -694,7 +751,7 @@
   }
   function checkOne(book, lib) {
     var q = mainTitle(book.title) + (book.author ? ' ' + surname(book.author) : '');
-    return fetchText(SRC.libSearch(lib.key, q)).then(function (txt) { return pickFormats(book, JSON.parse(txt).items); });
+    return fetchText(SRC.libSearch(lib.key, q), isJSON).then(function (txt) { return pickFormats(book, JSON.parse(txt).items); });
   }
   /* Best copy of each format across her libraries, and the book's overall colour. */
   function summarize(book, avail, libs) {
@@ -758,7 +815,7 @@
         ? 'Storytime could not reach the library catalogue. Check your connection, then see “If checks fail” on the Bring in a list screen.'
         : 'Checked ' + j.done + (j.done === 1 ? ' listing' : ' listings') + (j.failed ? ', ' + j.failed + ' could not be reached' : '') + (j.stop ? ' (stopped early)' : '') + '.';
       var k = currentKey();
-      if (k === 'books' || k === 'home' || k === 'book') route({ keepScroll: true });
+      if (k === 'books' || k === 'home' || k === 'book' || k === 'finished') route({ keepScroll: true });
     }
     function next() {
       if (!job) return;
@@ -787,7 +844,7 @@
   function paintJob() {
     var el = document.getElementById('chk');
     if (el) el.innerHTML = jobHTML();
-    var btns = document.querySelectorAll('[data-act="check"],[data-act="check-all"],[data-act="check-one"]');
+    var btns = document.querySelectorAll('[data-act="check"],[data-act="check-all"],[data-act="check-one"],[data-act="check-read"]');
     for (var i = 0; i < btns.length; i++) btns[i].disabled = !!job;
   }
   function paintBook(id, avail) {
@@ -798,19 +855,19 @@
   /* ----- screens ----- */
   NAV.splice(1, 1,
     { label: 'My books', href: '#/books', icon: 'book', group: 'Reading' },
-    { label: 'Finished', href: '#/finished', icon: 'check', group: 'Reading' },
+    { label: 'Read', href: '#/finished', icon: 'check', group: 'Reading' },
     { label: 'My libraries', href: '#/libraries', icon: 'library', group: 'Set up' },
     { label: 'Bring in a list', href: '#/import', icon: 'download', group: 'Set up' }
   );
-  TITLES.books = 'My books'; TITLES.finished = 'Finished'; TITLES.libraries = 'My libraries'; TITLES['import'] = 'Bring in a list'; TITLES.book = 'Book';
+  TITLES.books = 'My books'; TITLES.finished = 'Read'; TITLES.libraries = 'My libraries'; TITLES['import'] = 'Bring in a list'; TITLES.book = 'Book';
 
   function rebuildIndex() {
     SEARCH_INDEX.length = 0;
-    getBooks().forEach(function (b) { SEARCH_INDEX.push({ title: b.title, text: (b.author || '') + (b.shelf === 'read' ? ' · finished' : ''), href: '#/book/' + b.id, kind: 'Book' }); });
+    getBooks().forEach(function (b) { SEARCH_INDEX.push({ title: b.title, text: (b.author || '') + (b.shelf === 'read' ? ' · read' : ''), href: '#/book/' + b.id, kind: 'Book' }); });
     getLibs().forEach(function (l) { SEARCH_INDEX.push({ title: l.name, text: 'Library · ' + l.key, href: '#/libraries', kind: 'Library' }); });
     SEARCH_INDEX.push(
       { title: 'My books', text: 'Reading list, borrow now, holds queue, availability, check my libraries', href: '#/books', kind: 'Screen' },
-      { title: 'Finished', text: 'Books marked as read, update Goodreads or StoryGraph, export', href: '#/finished', kind: 'Screen' },
+      { title: 'Read', text: 'Books you have read or finished, reread, availability, update Goodreads or StoryGraph, export', href: '#/finished', kind: 'Screen' },
       { title: 'My libraries', text: 'Add or remove the libraries you use in Libby', href: '#/libraries', kind: 'Screen' },
       { title: 'Bring in a list', text: 'Goodreads profile link, Goodreads export, StoryGraph export, CSV, add a book, relay', href: '#/import', kind: 'Screen' });    bkPaint();   // keep the backup panel's count in step
   }
@@ -870,7 +927,7 @@
       }).join('') + '</div>' +
       (shown.length ? shown.map(function (r) { return bookRow(r.b, avail, libs); }).join('') : '<div class="empty"><p>No books in this group.</p></div>') + '</div>';
   };
-  AFTER.books = paintJob; AFTER.home = paintJob; AFTER.book = paintJob;
+  AFTER.books = paintJob; AFTER.finished = paintJob; AFTER.home = paintJob; AFTER.book = paintJob;
 
   function cell(fmt, c, lib) {
     if (!c || c.s === 'none') return '<span class="av av--none">' + FMT_LABEL[fmt] + ' <small>not held</small></span>';
@@ -886,30 +943,28 @@
         '<div class="book__fmts">' + cell('ebook', r.ebook, l) + '</div><div class="book__fmts">' + cell('audiobook', r.audiobook, l) + '</div>') + '</div>';
     }).join('');
     var when = a && a.by ? Math.max.apply(null, Object.keys(a.by).map(function (k) { return a.by[k].at || 0; }).concat([0])) : 0;
-    return '<div class="wrap page"><p class="crumb"><a href="#/' + (done ? 'finished' : 'books') + '">' + (done ? 'Finished' : 'My books') + '</a> / Book</p>' +
-      '<header class="page__head"><h1>' + esc(b.title) + '</h1><p>' + esc(b.author || 'Unknown author') + (done ? ' · Finished' + (b.doneAt ? ' ' + esc(b.doneAt) : '') : '') + '</p></header>' +
-      (done ? '<div class="callout callout--good"><p class="callout__title">Finished</p>Goodreads and StoryGraph do not let other apps change your shelves, so update them with one tap each: ' +
+    return '<div class="wrap page"><p class="crumb"><a href="#/' + (done ? 'finished' : 'books') + '">' + (done ? 'Read' : 'My books') + '</a> / Book</p>' +
+      '<header class="page__head"><h1>' + esc(b.title) + '</h1><p>' + esc(b.author || 'Unknown author') + (done ? ' · Read' + (b.doneAt ? ' ' + esc(b.doneAt) : '') : '') + '</p></header>' +
+      (done && b.local ? '<div class="callout callout--good"><p class="callout__title">Finished</p>Goodreads and StoryGraph do not let other apps change your shelves, so update them with one tap each: ' +
           '<span class="actions"><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Open on Goodreads</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">Find on StoryGraph</a></span></div>'
-        : '<p class="legend"><span class="av av--' + s.overall + '">' + ST_LABEL[s.overall] + '</span></p>') +
-      (done ? '' : (libs.length ? '<h2>At your libraries</h2>' + perLib + (when ? '<p class="muted">Last checked ' + esc(bkDate(new Date(when).toISOString())) + '.</p>' : '') : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') +
+        : '') + '<p class="legend"><span class="av av--' + s.overall + '">' + ST_LABEL[s.overall] + '</span></p>' +
+      ((libs.length ? '<h2>At your libraries</h2>' + perLib + (when ? '<p class="muted">Last checked ' + esc(bkDate(new Date(when).toISOString())) + '.</p>' : '') : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') +
         '<div class="actions"><button type="button" class="btn" data-act="check-one" data-id="' + esc(b.id) + '"' + (libs.length ? '' : ' disabled') + '>Check this book</button></div><div id="chk">' + jobHTML() + '</div>') +
       '<h2>Your shelf</h2><div class="actions">' +
-        (done ? '<button type="button" class="btn" data-act="unfinish" data-id="' + esc(b.id) + '">Move back to my list</button>'
+        (done ? '<button type="button" class="btn" data-act="unfinish" data-id="' + esc(b.id) + '">Move back to my list</button>' + (b.local ? '' : '<a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>')
               : '<button type="button" class="btn btn--solid" data-act="finish" data-id="' + esc(b.id) + '">Mark as finished</button><a class="btn" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads page</a><a class="btn" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a>') +
         '<button type="button" class="link-btn" data-act="remove" data-id="' + esc(b.id) + '">Remove from Storytime</button></div></div>';
   };
 
   VIEWS.finished = function () {
-    var books = getBooks().filter(function (b) { return b.shelf === 'read'; });
-    books.sort(function (x, y) { return String(y.doneAt || '').localeCompare(String(x.doneAt || '')) || norm(x.title).localeCompare(norm(y.title)); });
-    var head = '<div class="wrap page"><header class="page__head"><h1>Finished</h1><p>Books you marked as read. Storytime keeps the list; you update Goodreads or StoryGraph with one tap per book.</p></header>';
-    if (!books.length) return head + '<div class="empty"><h2>Nothing finished yet</h2><p>Open a book and choose “Mark as finished”.</p></div></div>';
-    return head + '<div class="actions"><button type="button" class="btn" data-act="export-finished">Export finished list (CSV)</button></div>' +
-      '<p class="muted">The CSV uses Goodreads’ column names, for the import pages on Goodreads and StoryGraph.</p>' +
-      books.map(function (b) {
-        return '<div class="book" data-book="' + esc(b.id) + '"><a class="book__main" href="#/book/' + esc(b.id) + '"><h3>' + esc(b.title) + '</h3><p>' + esc(b.author || 'Unknown author') + (b.doneAt ? ' · ' + esc(b.doneAt) : '') + '</p></a>' +
-          '<div class="book__fmts"><a class="av" href="' + esc(SRC.grBook(b)) + '" target="_blank" rel="noopener">Goodreads</a><a class="av" href="' + esc(SRC.sgBook(b)) + '" target="_blank" rel="noopener">StoryGraph</a></div></div>';
-      }).join('') + '</div>';
+    var libs = getLibs(), avail = getAvail();
+    var rows = getBooks().filter(function (b) { return b.shelf === 'read'; }).map(function (b) { return { b: b, s: summarize(b, avail, libs) }; });
+    rows.sort(function (x, y) { return (ORDER[x.s.overall] - ORDER[y.s.overall]) || String(y.b.doneAt || '').localeCompare(String(x.b.doneAt || '')) || norm(x.b.title).localeCompare(norm(y.b.title)); });
+    var head = '<div class="wrap page"><header class="page__head"><h1>Read</h1><p>' + rows.length + (rows.length === 1 ? ' book' : ' books') + ' you have read. Check them at your libraries when you want to reread one.</p></header>';
+    if (!rows.length) return head + '<div class="empty"><h2>Nothing here yet</h2><p>Bring in your Read shelf, or open a book and choose “Mark as finished”.</p><p><a class="btn btn--solid" href="#/import">Bring in a list</a></p></div></div>';
+    return head + '<div class="actions"><button type="button" class="btn btn--solid" data-act="check-read"' + (libs.length ? '' : ' disabled') + '>Check for rereading</button><button type="button" class="link-btn" data-act="export-finished">Export this list (CSV)</button></div>' +
+      '<div id="chk">' + jobHTML() + '</div>' + (libs.length ? '' : '<div class="callout">No libraries yet. <a href="#/libraries">Add your libraries</a>.</div>') + LEGEND +
+      rows.map(function (r) { return bookRow(r.b, avail, libs); }).join('') + '</div>';
   };
 
   VIEWS.libraries = function () {
@@ -929,17 +984,17 @@
     return '<div class="wrap page"><header class="page__head"><h1>Bring in a list</h1><p>' + (n ? n + ' books in Storytime now. Bringing a list in again only adds what is new.' : 'Pick whichever is easiest. You can use more than one.') + '</p></header>' +
       '<h2>Goodreads profile link</h2><form class="card" data-form="gr-link"><div class="field"><label for="gr-in">Your Goodreads profile address or user number</label>' +
         '<input id="gr-in" name="gr" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="https://www.goodreads.com/user/show/12345678-name" value="' + esc(s.grUser) + '">' +
-        '<small>Connect once, then tap Refresh whenever you add books on Goodreads. Reads your Want to Read and Currently Reading shelves. Your profile must be visible to everyone, and no password is needed.</small></div>' +
+        '<small>Connect once, then tap Refresh whenever you add books on Goodreads. Reads your Want to Read, Currently Reading and Read shelves. Your profile must be visible to everyone, and no password is needed.</small></div>' +
         '<div class="actions"><button type="submit" class="btn btn--solid">' + (s.grUser ? 'Refresh from Goodreads' : 'Connect Goodreads') + '</button></div><p class="status-line" id="gr-status" role="status" aria-live="polite"></p></form>' +
       '<h2>Goodreads or StoryGraph export file</h2><div class="card"><p>Works with private profiles and needs no connection.</p><ul class="prose"><li><strong>Goodreads:</strong> My Books → Tools → Import and export → Export Library.</li><li><strong>StoryGraph:</strong> Manage Account → Manage Your Data → Export StoryGraph Library.</li></ul>' +
         '<div class="actions"><input type="file" id="csv-file" class="sr-only" accept=".csv,text/csv"><label class="btn btn--solid" for="csv-file">Choose the CSV file</label></div><p class="status-line" id="csv-status" role="status" aria-live="polite"></p></div>' +
       '<h2>Add one book</h2><form class="card" data-form="add-book"><div class="field"><label for="ab-t">Title</label><input id="ab-t" name="title" type="text" autocomplete="off" required></div>' +
         '<div class="field"><label for="ab-a">Author</label><input id="ab-a" name="author" type="text" autocomplete="off"></div>' +
         '<div class="actions"><button type="submit" class="btn">Add book</button></div><p class="status-line" id="ab-status" role="status" aria-live="polite"></p></form>' +
-      '<h2>If checks fail</h2><form class="card" data-form="relay"><p>Storytime asks Goodreads and the library catalogue directly. Goodreads refuses requests from web pages, so that one goes through a relay: a small service that fetches the public page and hands it back. The relay sees which public shelf and which titles are looked up, nothing else.</p>' +
-        '<div class="field"><label for="relay-in">Relay address</label><input id="relay-in" name="relay" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" value="' + esc(s.relay) + '">' +
-        '<small>Leave empty to never use a relay (the export file still works). To run your own free relay, see relay/worker.js in the app’s GitHub repo.</small></div>' +
-        '<div class="actions"><button type="submit" class="btn">Save</button><button type="button" class="link-btn" data-act="relay-reset">Use the default</button></div><p class="status-line" id="relay-status" role="status" aria-live="polite"></p></form>' +
+      '<h2>If checks fail</h2><form class="card" data-form="relay"><p>Storytime asks Goodreads and the library catalogue directly. Goodreads refuses requests from web pages, so that one goes through a relay: a small service that fetches the public page and hands it back. Storytime tries three public relays in turn, then Goodreads’ own shelf widget. A relay sees which public shelf and which titles are looked up, nothing else.</p>' +
+        '<div class="field"><label for="relay-in">Your own relay (optional)</label><input id="relay-in" name="relay" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" value="' + esc(s.relay) + '">' +
+        '<small>Leave empty to use the public relays. Your own is tried first and is more dependable; relay/worker.js in the app’s GitHub repo explains how to set one up for free.</small></div>' +
+        '<div class="actions"><button type="submit" class="btn">Save</button><button type="button" class="link-btn" data-act="relay-reset">Clear</button></div><p class="status-line" id="relay-status" role="status" aria-live="polite"></p></form>' +
       (n ? '<h2>Start over</h2><div class="actions"><button type="button" class="link-btn" data-act="clear-books">Remove all books from Storytime</button></div>' : '') + '</div>';
   };
 
@@ -962,6 +1017,7 @@
     if (!el || el.disabled) return;
     var act = el.getAttribute('data-act'), id = el.getAttribute('data-id');
     if (act === 'check') startCheck(listBooks(), false);
+    else if (act === 'check-read') startCheck(getBooks().filter(function (b) { return b.shelf === 'read'; }), false);
     else if (act === 'check-all') startCheck(listBooks(), true);
     else if (act === 'check-one') { var one = findBook(id); if (one) startCheck([one], true); }
     else if (act === 'stop') { if (job) job.stop = true; }
@@ -981,7 +1037,7 @@
       if (!window.confirm('Remove every book from Storytime on this device? Your Goodreads and StoryGraph shelves are not touched.')) return;
       saveBooks([]); store.set('avail', {}); route();
     }
-    else if (act === 'relay-reset') { setSetting('relay', DEFAULT_RELAY); route({ keepScroll: true }); }
+    else if (act === 'relay-reset') { setSetting('relay', ''); route({ keepScroll: true }); }
     else if (act === 'export-finished') exportFinished();
   });
   main.addEventListener('submit', function (e) {
@@ -997,7 +1053,7 @@
       var key = m[1];
       if (getLibs().some(function (l) { return l.key === key; })) { say('lib-status', 'That library is already on your list.', true); return; }
       say('lib-status', 'Looking up ' + key + '…'); busy(true);
-      fetchText(SRC.libInfo(key)).then(function (txt) {
+      fetchText(SRC.libInfo(key), isJSON).then(function (txt) {
         var d = JSON.parse(txt), k = String(d.preferredKey || d.id || key).toLowerCase(), libs = getLibs();
         if (!libs.some(function (l) { return l.key === k; })) libs.push({ key: k, name: String(d.name || k).slice(0, 120) });
         store.set('libs', libs); rebuildIndex(); route({ keepScroll: true });
@@ -1009,10 +1065,10 @@
       var uid = grUserId(e.target.gr.value);
       if (!uid) { say('gr-status', 'Paste the address of your Goodreads profile page. It contains a number, like /user/show/12345678.', true); return; }
       say('gr-status', 'Reading your Goodreads shelves…'); busy(true);
-      refreshGoodreads(uid).then(function (r) { setSetting('grUser', uid); route({ keepScroll: true }); say('gr-status', mergedMsg(r)); }).catch(function (err) {
+      refreshGoodreads(uid).then(function (r) { setSetting('grUser', uid); route({ keepScroll: true }); say('gr-status', mergedMsg(r) + (r.via === 'widget' ? ' Goodreads only shares the most recent books on each shelf this way (' + r.count + ' found); use the export file below for the full list.' : '')); }).catch(function (err) {
         busy(false);
         say('gr-status', err && err.feed ? 'Goodreads did not return a shelf. Make sure your profile is visible to everyone, or use the export file below.'
-          : err && err.blocked ? 'Goodreads could not be reached through the relay. Try again later, or use the export file below.'
+          : err && err.blocked ? 'Goodreads could not be reached by any route just now. Use the export file below; it always works.'
           : 'Goodreads could not be read (' + (err && err.status ? 'error ' + err.status : 'no answer') + '). Try again later, or use the export file below.', true);
       });
     } else if (f === 'add-book') {
@@ -1023,7 +1079,7 @@
     } else if (f === 'relay') {
       var v = String(e.target.relay.value || '').trim();
       if (v && !/^https:\/\/\S+$/.test(v)) { say('relay-status', 'A relay address must start with https://', true); return; }
-      setSetting('relay', v); directBlocked = {}; say('relay-status', v ? 'Saved.' : 'Saved. No relay will be used.');
+      setSetting('relay', v); directBlocked = {}; say('relay-status', v ? 'Saved.' : 'Saved. The public relays will be used.');
     }
   });
   main.addEventListener('change', function (e) {

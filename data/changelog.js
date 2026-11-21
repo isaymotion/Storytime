@@ -4,6 +4,15 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.0.1',
+    date: '2026-11-21',
+    title: 'Read shelf for rereading, and more ways to reach Goodreads',
+    items: [
+      { type: 'feature', text: 'Read: your Goodreads Read shelf now comes in too, and you can check those books at your libraries when you want to reread one.', href: '#/finished' },
+      { type: 'correction', text: 'Goodreads profile link: if one relay is down, Storytime now tries two more, then Goodreads’ own shelf widget, before giving up.', href: '#/import' }
+    ]
+  },
+  {
     version: '1.0.0',
     date: '2026-11-21',
     title: 'First release',

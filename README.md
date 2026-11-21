@@ -6,10 +6,10 @@ Bring in your Goodreads or StoryGraph list, add the libraries you use in Libby, 
 
 ## Features
 
-- **Bring in a list:** a Goodreads profile link (reads the public Want to Read and Currently Reading shelves), a Goodreads or StoryGraph export file (CSV), or books typed in by hand.
+- **Bring in a list:** a Goodreads profile link (reads the public Want to Read, Currently Reading and Read shelves), a Goodreads or StoryGraph export file (CSV), or books typed in by hand.
 - **My libraries:** add each library you use in Libby by its code or web address.
 - **My books:** every book checked at every library. Green = borrow now, orange = holds queue (with the estimated wait), red = not at your libraries. Ebook and audiobook are shown separately, and each coloured button opens that title in Libby.
-- **Finished:** mark a book as read; one-tap links open its Goodreads and StoryGraph pages so you can update your shelf there, and the finished list exports as a CSV.
+- **Read:** books you have read, which you can check at your libraries for a reread. Mark a book as finished and one-tap links open its Goodreads and StoryGraph pages so you can update your shelf there, and the finished list exports as a CSV.
 - The shared isaymotion shell: menu, search (press `/`), back and forward buttons, light/dark theme, text size, What's new, and backup (export, import, undo).
 - No accounts, no passwords, no tracking. Books and libraries are saved in the browser on each device.
 
