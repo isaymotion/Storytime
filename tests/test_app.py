@@ -48,6 +48,9 @@ with sync_playwright() as pw:
     pg.on('dialog', lambda d: d.accept())
     pg.route('**/*', handler)
     B = 'http://localhost:8765/'
+    def pick_fmt(v):   # the radio sits low on a long page: centre it, then tap it by position (clear of the tab bar)
+        box = pg.evaluate("v => { const e = document.querySelector('input[name=fmt][value=' + v + ']'); e.scrollIntoView({block: 'center'}); const r = e.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; }", v)
+        pg.mouse.click(box[0], box[1]); pg.wait_for_function("v => document.querySelector('input[name=fmt][value=' + v + ']').checked", arg=v)
     pg.goto(B); ok('Two steps to start' in pg.inner_text('#main'), 'home shows setup steps')
     # unit checks
     r = pg.evaluate("""() => { const s = window.__storytime; return {
@@ -85,8 +88,24 @@ with sync_playwright() as pw:
     ok('Added 4 books' in pg.inner_text('#csv-status'), 'csv merged without duplicating: ' + pg.inner_text('#csv-status'))
     # check
     pg.goto(B+'#/books'); ok('5 books to read' in pg.inner_text('.page__head'), 'five books on the list: ' + pg.inner_text('.page__head p'))
+    # smart check: favourite library first, stop once a book can be borrowed now
+    pg.goto(B+'#/libraries'); pg.click('[data-act=lib-fav][data-id=lapl]'); pg.wait_for_selector('[data-act=lib-fav][aria-pressed=true]')
+    ok(pg.locator('.libcard h3').first.inner_text().strip().endswith('Los Angeles Public Library') and 'checked first' in pg.inner_text('.libcard >> nth=0'), 'favourite library listed first')
+    pg.goto(B+'#/books'); m0 = len(seen)
     pg.click('[data-act=check]'); pg.wait_for_function("document.getElementById('chk').textContent.indexOf('Checked')>-1", timeout=30000)
-    ok('Checked 10 listings' in pg.inner_text('#chk'), pg.inner_text('#chk'))
+    looks = [urllib.parse.unquote(u) for u in seen[m0:] if '/media?' in u]
+    phm = [u for u in looks if 'Hail Mary' in u]
+    ok(len(phm)==1 and '/lapl/' in phm[0], 'favourite asked first, then no more lookups for that book: ' + str(len(phm)))
+    ok(len(looks)==9 and 'Checked 5 books (9 lookups)' in pg.inner_text('#chk') and 'Skipped 1 lookup' in pg.inner_text('#chk'), 'smart check saves lookups: ' + pg.inner_text('#chk'))
+    ok(pg.locator('.book--now').count()==2 and pg.locator('.book--unknown').count()==0, 'smart check still colours every book')
+    pg.click('.book__main >> text=Project Hail Mary'); pg.wait_for_selector('.libcard')
+    ok('a copy to borrow now was found first' in pg.inner_text('#main'), 'book page explains the skipped library')
+    # formats: audiobooks only -> the ebook-only copy no longer makes it green
+    pg.goto(B+'#/libraries'); pick_fmt('audiobook'); pg.goto(B+'#/books')
+    ok(pg.locator('.book--now').count()==0, 'colour follows the formats she reads')
+    pg.goto(B+'#/libraries'); pick_fmt('any'); pg.goto(B+'#/books')
+    pg.click('[data-act=check-all]'); pg.wait_for_function("document.getElementById('chk').textContent.indexOf('Checked')>-1", timeout=30000)
+    ok('Checked 5 books (10 lookups)' in pg.inner_text('#chk'), 'full check asks every library: ' + pg.inner_text('#chk'))
     rows = pg.evaluate("""() => [...document.querySelectorAll('.book')].map(b => [b.querySelector('h3').textContent, b.className.replace('book book--',''), [...b.querySelectorAll('.av')].map(a => a.textContent.trim()+(a.href?' -> '+a.href:''))])""")
     for x in rows: print('    ', x)
     d = {x[0]: x for x in rows}
@@ -94,7 +113,7 @@ with sync_playwright() as pw:
     lb = pg.evaluate("() => Object.fromEntries([...document.querySelectorAll('.book')].map(b => [b.querySelector('h3').textContent, [...b.querySelectorAll('.libby-btn')].map(a => a.textContent.trim() + ' ' + a.href)]))")
     ok(lb['Project Hail Mary']==['Open ebook in Libby app https://libbyapp.com/search/lapl/search/query-Project%20Hail%20Mary%20Weir/page-1/201', 'Open audiobook in Libby app https://libbyapp.com/search/nypl/search/query-Project%20Hail%20Mary%20Weir/page-1/102'], 'ebook and audiobook Libby buttons: ' + str(lb['Project Hail Mary']))
     ok(lb['The Martian']==['Open ebook in Libby app https://libbyapp.com/search/nypl/search/query-The%20Martian%20Weir/page-1/103'], 'only the held format gets a button')
-    ok(lb['It (Stephen King, #1)']==['Search in Libby app https://libbyapp.com/search/nypl/search/query-It%20King/page-1'], 'search button when not held')
+    ok(lb['It (Stephen King, #1)']==['Search in Libby app https://libbyapp.com/search/lapl/search/query-It%20King/page-1'], 'search button when not held')
     ok(d['Piranesi'][1]=='wait' and 'about 5 wk' in d['Piranesi'][2][0], 'holds queue with wait')
     ok(d['It (Stephen King, #1)'][1]=='none', 'not held is red')
     ok(rows[0][1]=='now' and rows[-1][1]=='none', 'sorted green first')
