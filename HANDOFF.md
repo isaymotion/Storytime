@@ -1,4 +1,4 @@
-# Storytime handoff (21 Nov 2026, v1.2.0 built, awaiting publish)
+# Storytime handoff (21 Nov 2026, after v1.3.0)
 
 ## 1. Project and audience
 Storytime is a free web app for readers: bring in a Goodreads or StoryGraph list, add the libraries you use in Libby, see which books can be borrowed now, and open them in Libby. Built for Isabella Navarro, MD (first user and tester, on iPhone), then the public.
@@ -37,16 +37,18 @@ All outside addresses are in one object, `SRC`, in `js/app.js`:
 - `grFeed(uid, shelf, page)`: Goodreads shelf RSS; `grWidget(uid, shelf)`: Goodreads embeddable shelf widget script.
 
 Stored under `s:v1:`:
-- `books`: `[{id, title, author, isbn, grId, shelf: 'want'|'reading'|'read', source, doneAt, local?}]` (`local: true` = she changed the shelf here; imports never undo it)
-- `libs`: `[{key: 'nypl', name: 'New York Public Library', fav?: true}]` (`fav` = favourite, asked first; `prefLibs()` gives favourites first)
-- `avail`: `{bookId: {by: {libKey: {at, ebook: {s:'now'|'wait'|'none', id, copies|holds|days}, audiobook: {...}} | {err:true}}}}`
+- `books`: `[{id, title, author, isbn, grId, shelf: 'want'|'reading'|'read', source, doneAt, local?, tags?: [..], hold?: {key, name, fmt, at, days}}]` (`tags` = her Goodreads shelves / StoryGraph tags from the export or feed; `hold` = a hold she says she placed) (`local: true` = she changed the shelf here; imports never undo it)
+- `libs`: `[{key: 'nypl', name: 'New York Public Library', fav?: true, exp?: 'YYYY-MM-DD'}]` (`exp` = card renewal date, home screen warns 30 days before; `fav` = favourite, asked first; `prefLibs()` gives favourites first)
+- `avail`: `{bookId: {cover?: 'https://…' (one per book, from the catalogue), by: {libKey: {at, ebook: {s:'now'|'wait'|'none', id, copies|holds|days}, audiobook: {...}} | {err:true}}}}`
 - `settings`: `{grUser, relay, fmt}` (relay = her own relay address, empty by default; `fmt` = `any`|`ebook`|`audiobook`, the formats she reads, set on My libraries)
 
 Network layer `fetchText(url, valid)`: direct first; if the browser is refused, her own relay then three public relays in turn (`RELAYS`). Goodreads always needs a relay; if all fail, the widget route runs in a sandboxed iframe (titles and authors only, most recent books per shelf).
 
 Checking (`startCheck(books, full)`, v1.2.0): goes book by book, two books at a time. Smart check (`full` false; "Check my libraries", "Check for rereading") asks the library that had the book last time, then favourites, then the rest, and stops for that book once a format she reads is `now` (`hasNow`). Books with a fresh `now` answer are skipped. Full check ("Check every library (slower)", "Check every library for this book") asks all libraries. A book's colour uses only the formats in `settings.fmt`, and it is red only when every library has a saved answer (otherwise "Not checked yet").
 
-Screens (`VIEWS`): `home`, `books/<filter>`, `book/<id>`, `finished` (titled "Read"), `libraries`, `import`. Colours: green = borrow now, orange = holds queue, red = not held; ebook and audiobook separate.
+v1.3.0 additions: covers (`coverHTML`: catalogue cover, else Open Library by ISBN via `SRC.cover`, else a letter tile); shelf/series picker on My books (`groupFilter`, `seriesOf`); hold tracker (`hold` / `hold-clear` actions, `books/hold` filter); library value and renewal dates (`libStats`, `renewNote`); red-book callout with `SRC.shop` (Bookshop.org search, or affiliate link when `APP_META.bookshopId` is set); sharing (`shareText`: share sheet, else clipboard); Privacy screen; Support card on Home and About, shown only when `APP_META.kofi` holds a `https://ko-fi.com/<name>` address (both are empty in `data/app-meta.js` for now).
+
+Screens (`VIEWS`): `home`, `books/<filter>` (filters now include `hold`), `book/<id>`, `finished` (titled "Read"), `libraries`, `import`, `privacy`. Colours: green = borrow now, orange = holds queue, red = not held; ebook and audiobook separate.
 
 ## 4. Recipe for one change
 1. `git clone --depth 1 https://github.com/isaymotion/Storytime` (never rebuild from memory).
@@ -70,40 +72,31 @@ node -e "new (require('vm').Script)(require('fs').readFileSync('app/js/app.js','
 ## 6. Status
 | Area | State |
 |---|---|
-| v1.1.0 live on `main` | Done |
-| v1.2.0 | Built and tested 21 Nov 2026, NOT published: the session was not allowed to push to the repo. She was given `storytime-v1.2.0.zip` (5 changed app files: js/app.js, css/app.css, sw.js, data/app-meta.js, data/changelog.js) and `storytime-dev-tools-v1.2.0.zip`. First check whether `main` shows 1.2.0 in `data/app-meta.js`; if not, redo from the zip or ask her to add the repo to the session, then push |
-| Smart check, favourite libraries, format choice (v1.2.0) | Built, mock-tested; not tried by her |
+| v1.3.0 live on `main` | Done (pushed 21 Nov 2026; she added the repo to the session, so pushing works) |
+| Smart check, favourites, format choice (v1.2.0) | Built, mock-tested; not tried by her |
+| Covers, hold tracker, shelf/series filter, library value + renewal dates, red-book help, sharing, privacy page (v1.3.0) | Built, mock-tested; not tried by her. Real catalogue cover field (`covers.cover150Wide.href`) not verified against a live answer |
+| Ko-fi support card | Built, hidden until she gives her Ko-fi address (`APP_META.kofi`) |
 | Goodreads profile link (Want to Read, Currently Reading, Read) | Working for her (profile `57096661-chuu`) via a fallback route; which route is unknown |
 | Goodreads / StoryGraph CSV import, add by hand | Built, mock-tested; not tried by her |
 | Add libraries by code (several at once) | Built; 24 of her 25 codes verified against the catalogue |
-| Availability check and colours | Built, mock-tested; she has not explicitly confirmed a full real run |
+| Availability check and colours | She confirmed a full real run worked (on v1.1.0) |
 | "Open ebook/audiobook in Libby app" buttons | Confirmed working on her iPhone |
 | Read shelf with "Check for rereading" | Built, mock-tested |
-| Find your library by name (v1.1.0) | Built, mock-tested only; real 13k-library download untested |
+| Find your library by name (v1.1.0) | Works on her phone but the first search took about 5 minutes. Fix = the weekly list job below |
 | Weekly library-list job | Written, NOT installed (see section 8) |
 | Tagalog strings for Storytime screens | Not done (shell strings only) |
 
 Her library codes: nypl, brooklyn, melsa, piercecounty (guess from a cut-off name), clevnet, maryland, sno-isle, buffalo, bpl, northnet, kclibrary, dayton, clc (Digital Downloads Ohio), queenslibrary, timberland, akronlibrary, mcpl, hcpl, jf, spl, ohdbks, library2go, okvirtuallibrary, pioneerok (Oklahoma; unconfirmed), lasvegas.
 
 ## 7. Next steps
-Still waiting on her answers (asked 21 Nov, none yet):
-1. How did the library finder behave on her phone (time for first search, right results)? If slow, discuss the weekly list job (she must add the workflow file herself).
-2. Did a real "Check my libraries" run work with her 25 libraries, and how long did it take after v1.2.0? Ask her to mark 3 to 5 favourites first.
-3. Does she want her own relay (`relay/worker.js`, free Cloudflare account, ~5 minutes) so the Goodreads link does not depend on public relays?
-
-Feature ideas offered to her on 21 Nov (none approved yet; build only what she picks):
-- Book covers (Open Library covers by ISBN; OverDrive items also carry cover art).
-- "Ready to borrow" home list and a sort by shortest wait; show wait per library on the book page.
-- Hold tracker: she taps "I placed a hold" (Storytime cannot place or read holds), with expected date from the wait estimate.
-- Shelf tags from Goodreads/StoryGraph exports as filters; series order; currently-reading pinned on top.
-- Library card notes (which libraries need renewing, card expiry) and a per-library count of how many of her books each holds, to show which cards are worth keeping.
-- Share a book or a "borrow now" list as text; Kindle-availability flag (US libraries only).
-- For red books: bookshop/affiliate links, "suggest a purchase" link to the library, donations link. Keep affiliate links off anything that shows library availability as a paid feature.
-- Tagalog strings for Storytime screens; first-run walkthrough; install prompt.
-- Before any public push: test with a second person's list, add a privacy note page, and re-read OverDrive's terms.
+1. Ko-fi: she asked for her Ko-fi page on Storytime and all her other apps. Waiting for her Ko-fi address. Then set `kofi` in Storytime's `data/app-meta.js` and publish. For the other apps (MSEtrainer, Tagalog, DSMVapp, Stahl, KaplanStudy, sheatrainer, and any newer ones): add the same `APP_META.kofi` + support card to the `isaymotion-app-design` starter and references first, then roll out repo by repo (each repo must be added to the session before it can be pushed). She was told that asking for money on apps built from textbook content (Kaplan, Stahl, DSM, Shea) carries more copyright risk than on Storytime; get her decision before adding it there.
+2. Own relay: she said yes, and has a phone reminder for Wed 25 Nov 2026, 9:00 am (when her usage resets). Walk her through `relay/worker.js` on a free Cloudflare account, then she pastes the address under Bring in a list → If checks fail.
+3. Library finder speed: offer to walk her through adding the weekly list workflow (`optional-library-list/` on dev-tools; she must add the workflow file herself, see section 8). Once `data/libraries.json` exists on `main`, the finder loads it in one request.
+4. Ask how v1.2.0/1.3.0 behave on her phone: check time with favourites set, whether covers show, hold tracker, share sheet.
+5. Not built yet from her approved list: Tagalog strings for Storytime screens (her drafts to review), a trial with a second person's list (hers to arrange), a Bookshop.org affiliate number (`APP_META.bookshopId`) if she signs up, Kindle flag, per-book notes.
 
 ## 8. Pitfalls learned
-- A new session may be able to clone but not push (`not in this session's authorized repository set`). Adding the repo from inside the session was also refused. Do not work around it: give her the changed files, or ask her to add the repo to the session's sources.
+- A new session may be able to clone but not push (`not in this session's authorized repository set`). Adding the repo with the session's add-repository tool was refused until she said in chat that Claude has access to her repos; after that it worked. Ask her first; do not work around a refusal.
 - The sandbox shell cannot reach Goodreads, OverDrive or relays. Use WebFetch for single catalogue lookups (one at a time; ~20 in parallel gets rate-limited). `libbyapp.com/api/...` is robots-disallowed.
 - Enabling GitHub Pages via the API was not permitted; she switched it on in Settings → Pages.
 - Pushing a GitHub Actions workflow and starting it was blocked by the session's safety check. Do not retry or work around it; hand her the files.
@@ -113,6 +106,7 @@ Feature ideas offered to her on 21 Nov (none approved yet; build only what she p
 - In Playwright, click sticky top-bar buttons by coordinates, not `locator.click()`.
 - GitHub Pages path is case-sensitive: `/Storytime/`.
 - In tests, tap the format radios (My libraries) by position after centring them (`pick_fmt`); the bottom tab bar covers them otherwise.
+- Count catalogue lookups in tests by `thunder.api` addresses only: cover pictures add other requests.
 - Test mocks: with `lapl` as favourite the smart check makes 9 lookups for 5 books; the full check makes 10.
 
 ## 9. Files to re-attach

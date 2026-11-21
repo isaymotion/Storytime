@@ -5,7 +5,7 @@ OUT = os.environ.get('ST_OUT', '/tmp/storytime-qa'); os.makedirs(OUT, exist_ok=T
 srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8765', '--directory', APP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(1)
 def item(id, title, author, ty, avail, owned=5, holds=0, days=None):
-    return {"id": id, "title": title, "firstCreatorName": author, "creators":[{"name":author}], "type": {"id": ty}, "isAvailable": avail, "availableCopies": 2 if avail else 0, "ownedCopies": owned, "holdsCount": holds, "estimatedWaitDays": days, "isHoldable": owned > 0}
+    return {"id": id, "title": title, "firstCreatorName": author, "creators":[{"name":author}], "type": {"id": ty}, "isAvailable": avail, "availableCopies": 2 if avail else 0, "ownedCopies": owned, "holdsCount": holds, "estimatedWaitDays": days, "isHoldable": owned > 0, "covers": {"cover150Wide": {"href": "https://img1.od-cdn.com/c/%s.jpg" % id}}}
 CAT = {
  'nypl': [item('101','Project Hail Mary','Andy Weir','ebook',False,250,204,12), item('102','Project Hail Mary','Andy Weir','audiobook',True),
           item('103','The Martian','Andy Weir','ebook',True), item('104','Piranesi','Susanna Clarke','ebook',False,10,40,35),
@@ -15,7 +15,7 @@ CAT = {
 RSS = '''<?xml version="1.0"?><rss><channel><title>shelf</title>
 <item><title>Project Hail Mary</title><author_name>Andy Weir</author_name><isbn>0593135202</isbn><book_id>54493401</book_id></item>
 <item><title>Piranesi</title><author_name>Susanna Clarke</author_name><isbn></isbn><book_id>50202953</book_id></item></channel></rss>'''
-CSV = 'Book Id,Title,Author,ISBN,ISBN13,Exclusive Shelf,Date Read\n1,"The Martian",Andy Weir,"=""0553418025""","=""9780553418026""",to-read,\n2,"It (Stephen King, #1)",Stephen King,,,to-read,\n3,"Dune",Frank Herbert,,,read,2025/01/02\n54493401,"Project Hail Mary",Andy Weir,,,to-read,\n4,"Obscure Zine: A Subtitle, with comma",Nobody Known,,,to-read,\n'
+CSV = 'Book Id,Title,Author,ISBN,ISBN13,Exclusive Shelf,Date Read,Bookshelves\n1,"The Martian",Andy Weir,"=""0553418025""","=""9780553418026""",to-read,,"sci-fi, to-read"\n2,"It (Stephen King, #1)",Stephen King,,,to-read,,horror\n3,"Dune",Frank Herbert,,,read,2025/01/02,\n54493401,"Project Hail Mary",Andy Weir,,,to-read,,"Sci-Fi, favourites"\n4,"Obscure Zine: A Subtitle, with comma",Nobody Known,,,to-read,\n'
 seen = []
 def handler(route):
     u = route.request.url
@@ -34,7 +34,7 @@ def handler(route):
     if 'goodreads.com' in u and 'allorigins' not in u: return route.abort()          # no CORS: direct is refused
     if 'allorigins' in u:
         return route.fulfill(status=200, headers={'access-control-allow-origin': '*'}, body=RSS if 'to-read' in urllib.parse.unquote(u) else '<rss><channel></channel></rss>')
-    if 'fonts.g' in u: return route.abort()
+    if 'fonts.g' in u or 'od-cdn' in u or 'openlibrary' in u: return route.abort()
     return route.continue_()
 fails = []
 def ok(c, msg):
@@ -118,8 +118,38 @@ with sync_playwright() as pw:
     ok(d['It (Stephen King, #1)'][1]=='none', 'not held is red')
     ok(rows[0][1]=='now' and rows[-1][1]=='none', 'sorted green first')
     pg.screenshot(path=OUT + '/books-light.png', full_page=True)
-    n0 = len(seen); pg.click('[data-act=check]'); pg.wait_for_timeout(500)
-    ok(len(seen)==n0 and 'last 6 hours' in pg.inner_text('#chk'), 'fresh results are not fetched again')
+    # v1.3.0: covers, shelves, holds, red books, sharing, library value, privacy
+    av = pg.evaluate("JSON.parse(localStorage.getItem('s:v1:avail'))")
+    ok(sum(1 for v in av.values() if 'od-cdn.com' in v.get('cover', '')) == 3 and not any('cover' in r for v in av.values() for r in v['by'].values()), 'one cover saved per book found')
+    ok(pg.locator('.book .book__cover').count()==5, 'every row has a cover or a letter tile')
+    pg.select_option('#grp', 't:sci-fi'); pg.wait_for_function("document.querySelectorAll('.book').length===2")
+    ok(sorted(pg.evaluate("[...document.querySelectorAll('.book h3')].map(e=>e.textContent)"))==['Project Hail Mary','The Martian'], 'shelf filter from the export file')
+    pg.select_option('#grp', ''); pg.wait_for_function("document.querySelectorAll('.book').length===5")
+    pg.click('.book__main >> text=Piranesi'); pg.wait_for_selector('.libcard')
+    ok(pg.locator('.libcard h3').first.inner_text()=='New York Public Library', 'shortest wait listed first')
+    pg.click('[data-act=hold][data-lib=nypl]'); pg.wait_for_selector('.callout:has-text("On hold")')
+    ok('Ebook on hold at New York Public Library, expected around' in pg.inner_text('.callout'), 'hold tracked: ' + pg.inner_text('.callout').replace('\n', ' '))
+    pg.screenshot(path=OUT + '/book-hold.png', full_page=True)
+    pg.goto(B+'#/books/hold'); ok(pg.locator('.book').count()==1 and 'on hold at' in pg.inner_text('.book'), 'On hold filter')
+    pg.click('.book__main'); pg.click('[data-act=hold-clear]'); pg.wait_for_function("!document.querySelector('[data-act=hold-clear]')")
+    pg.goto(B+'#/books'); pg.click('.book__main >> text=It (Stephen King'); pg.wait_for_selector('.callout--caution')
+    ok('bookshop.org/search?keywords=It%20Stephen%20King' in pg.content() and 'Notify Me' in pg.inner_text('.callout--caution'), 'red book: bookshop link and Libby tip')
+    pg.evaluate("() => { window.__shared = ''; Object.defineProperty(navigator, 'share', {value: undefined, configurable: true}); Object.defineProperty(navigator, 'clipboard', {value: {writeText: t => { window.__shared = t; return Promise.resolve(); }}, configurable: true}); }")
+    pg.goto(B+'#/books'); pg.click('[data-act=share-now]'); pg.wait_for_function("document.getElementById('share-status').textContent.indexOf('Copied')>-1")
+    sh = pg.evaluate("window.__shared"); ok('Project Hail Mary by Andy Weir' in sh and 'The Martian' in sh and 'Piranesi' not in sh, 'borrow-now list shared: ' + sh.replace('\n', ' | ')[:120])
+    pg.goto(B+'#/libraries'); txt = pg.inner_text('#main')
+    ok('Has 2 of the 5 books checked here, 1 to borrow now.' in txt and 'at this library only' in txt, 'library value counts')
+    pg.evaluate("() => { const e = document.querySelector('[data-exp=nypl]'); const d = new Date(Date.now() + 5 * 864e5); e.value = d.toISOString().slice(0, 10); e.dispatchEvent(new Event('change', {bubbles: true})); }")
+    pg.goto(B+'#/'); ok('Library card to renew' in pg.inner_text('#main') and pg.locator('.support').count()==0, 'card renewal reminder on home; no support card without a Ko-fi address')
+    pg.screenshot(path=OUT + '/home-renew.png', full_page=True)
+    pg.goto(B+'#/libraries'); pg.screenshot(path=OUT + '/libraries.png', full_page=True)
+    pg.evaluate("() => { const e = document.querySelector('[data-exp=nypl]'); e.value = ''; e.dispatchEvent(new Event('change', {bubbles: true})); }")
+    pg.goto(B+'#/privacy'); ok('saved in this browser only' in pg.inner_text('#main'), 'privacy page')
+    pg.goto(B+'#/books'); pg.wait_for_selector('.book')
+    api = lambda: sum(1 for u in seen if 'thunder.api' in u)
+    n0 = api(); pg.click('[data-act=check]'); pg.wait_for_timeout(500)
+
+    ok(api()==n0 and 'last 6 hours' in pg.inner_text('#chk'), 'fresh results are not fetched again')
     # detail + finish
     pg.click('.book__main >> text=Project Hail Mary'); pg.wait_for_selector('.libcard')
     ok('Los Angeles Public Library' in pg.inner_text('#main') and 'lapl.overdrive.com/media/201' in pg.content(), 'detail lists each library')
