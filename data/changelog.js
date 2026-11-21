@@ -4,6 +4,14 @@
    then bump APP_META.version, VERSION in sw.js, and "Latest version" in the footer / README. */
 window.APP_CHANGELOG = [
   {
+    version: '1.0.2',
+    date: '2026-11-21',
+    title: 'Clearer help for library codes',
+    items: [
+      { type: 'correction', text: 'My libraries: the help text now explains where a library code really comes from. The earlier Libby menu steps were wrong.', href: '#/libraries' }
+    ]
+  },
+  {
     version: '1.0.1',
     date: '2026-11-21',
     title: 'Read shelf for rereading, and more ways to reach Goodreads',

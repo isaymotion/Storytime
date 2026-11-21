@@ -975,7 +975,7 @@
       }).join('') : '<div class="empty"><p>No libraries yet.</p></div>') +
       '<h2>Add a library</h2><form class="card" data-form="add-lib"><div class="field"><label for="lib-in">Library code or web address</label>' +
         '<input id="lib-in" name="lib" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="e.g. nypl or https://nypl.overdrive.com" required>' +
-        '<small>Find it in Libby: Menu → your library → Share. The link looks like libbyapp.com/library/<strong>code</strong>. Your library’s OverDrive site, <strong>code</strong>.overdrive.com, uses the same code.</small></div>' +
+        '<small>The code is the first part of your library’s OverDrive web address, <strong>code</strong>.overdrive.com. It is usually a short form of the name: New York Public Library is <strong>nypl</strong>, Brooklyn Public Library is <strong>brooklyn</strong>. Not sure? Search the web for your library’s name plus “OverDrive” and paste the address here.</small></div>' +
         '<div class="actions"><button type="submit" class="btn btn--solid">Add library</button></div><p class="status-line" id="lib-status" role="status" aria-live="polite"></p></form></div>';
   };
 
