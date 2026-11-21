@@ -538,7 +538,7 @@
   var SRC = {
     libInfo: function (key) { return 'https://thunder.api.overdrive.com/v2/libraries/' + encodeURIComponent(key); },
     libSearch: function (key, q) { return 'https://thunder.api.overdrive.com/v2/libraries/' + encodeURIComponent(key) + '/media?query=' + encodeURIComponent(q) + '&perPage=24'; },
-    libby: function (id) { return 'https://share.libbyapp.com/title/' + encodeURIComponent(id); },
+    libList: function (page) { return 'https://thunder.api.overdrive.com/v2/libraries?perPage=100&page=' + page; },
     /* Opens the Libby app itself (libbyapp.com links are handed to the app when it is installed): the title's own page when the
        catalogue id is known, otherwise a search for the book at that library. */
     libbyApp: function (key, q, id) { return 'https://libbyapp.com/search/' + encodeURIComponent(key) + '/search/query-' + encodeURIComponent(q) + '/page-1' + (id ? '/' + encodeURIComponent(id) : ''); },
@@ -779,11 +779,11 @@
   }
   var FMT_LABEL = { ebook: 'Ebook', audiobook: 'Audiobook' };
   var ST_LABEL = { now: 'Borrow now', wait: 'Holds queue', none: 'Not at your libraries', unknown: 'Not checked yet' };
-  function pill(fmt, c, showLib) {
+  function pill(fmt, c, showLib, b, lib) {
     var label = FMT_LABEL[fmt];
     if (!c || c.s === 'none') return '<span class="av av--none">' + label + ' <small>not held</small></span>';
     var txt = c.s === 'now' ? 'borrow now' : waitText(c);
-    return '<a class="av av--' + c.s + '" href="' + esc(SRC.libby(c.id)) + '" target="_blank" rel="noopener" title="Open in Libby">' + label + ' <small>' + esc(txt) + (showLib && c.lib ? ' · ' + esc(c.lib.name) : '') + '</small><span class="sr-only"> (opens in Libby)</span></a>';
+    return '<a class="av av--' + c.s + '" href="' + esc(SRC.libbyApp((c.lib || lib).key, libbyQuery(b), c.id)) + '" target="_blank" rel="noopener" title="Open in Libby">' + label + ' <small>' + esc(txt) + (showLib && c.lib ? ' · ' + esc(c.lib.name) : '') + '</small><span class="sr-only"> (opens in Libby)</span></a>';
   }
   function libbyQuery(b) { return mainTitle(b.title) + (b.author ? ' ' + surname(b.author) : ''); }
   /* A button per format that a library holds, each going to the best copy of that format.
@@ -802,7 +802,7 @@
     var s = summarize(b, avail, libs);
     return '<div class="book book--' + s.overall + '" data-book="' + esc(b.id) + '">' +
       '<a class="book__main" href="#/book/' + esc(b.id) + '"><h3>' + esc(b.title) + '</h3><p>' + esc(b.author || 'Unknown author') + ' · <span class="book__st">' + ST_LABEL[s.overall] + '</span></p></a>' +
-      (s.overall === 'unknown' ? '' : '<div class="book__fmts">' + pill('ebook', s.ebook, libs.length > 1) + pill('audiobook', s.audiobook, libs.length > 1) + '</div>') +
+      (s.overall === 'unknown' ? '' : '<div class="book__fmts">' + pill('ebook', s.ebook, libs.length > 1, b) + pill('audiobook', s.audiobook, libs.length > 1, b) + '</div>') +
       libbyButton(b, s, libs) +
     '</div>';
   }
@@ -884,7 +884,7 @@
     SEARCH_INDEX.push(
       { title: 'My books', text: 'Reading list, borrow now, holds queue, availability, check my libraries', href: '#/books', kind: 'Screen' },
       { title: 'Read', text: 'Books you have read or finished, reread, availability, update Goodreads or StoryGraph, export', href: '#/finished', kind: 'Screen' },
-      { title: 'My libraries', text: 'Add or remove the libraries you use in Libby', href: '#/libraries', kind: 'Screen' },
+      { title: 'My libraries', text: 'Add or remove the libraries you use in Libby, find your library code, library code checker', href: '#/libraries', kind: 'Screen' },
       { title: 'Bring in a list', text: 'Goodreads profile link, Goodreads export, StoryGraph export, CSV, add a book, relay', href: '#/import', kind: 'Screen' });    bkPaint();   // keep the backup panel's count in step
   }
   rebuildIndex();
@@ -945,9 +945,9 @@
   };
   AFTER.books = paintJob; AFTER.finished = paintJob; AFTER.home = paintJob; AFTER.book = paintJob;
 
-  function cell(fmt, c, lib) {
+  function cell(fmt, c, lib, b) {
     if (!c || c.s === 'none') return '<span class="av av--none">' + FMT_LABEL[fmt] + ' <small>not held</small></span>';
-    return pill(fmt, c, false) + ' <a class="cell-link" href="' + esc(SRC.libSite(lib.key, c.id)) + '" target="_blank" rel="noopener">Library website</a>';
+    return pill(fmt, c, false, b, lib) + ' <a class="cell-link" href="' + esc(SRC.libSite(lib.key, c.id)) + '" target="_blank" rel="noopener">Library website</a>';
   }
   VIEWS.book = function (id) {
     var b = findBook(id);
@@ -956,7 +956,7 @@
     var perLib = libs.map(function (l) {
       var r = a && a.by && a.by[l.key];
       return '<div class="card libcard"><h3>' + esc(l.name) + '</h3>' + (!r ? '<p class="muted">Not checked yet.</p>' : r.err ? '<p class="muted">Could not be reached last time.</p>' :
-        '<div class="book__fmts">' + cell('ebook', r.ebook, l) + '</div><div class="book__fmts">' + cell('audiobook', r.audiobook, l) + '</div>') + '</div>';
+        '<div class="book__fmts">' + cell('ebook', r.ebook, l, b) + '</div><div class="book__fmts">' + cell('audiobook', r.audiobook, l, b) + '</div>') + '</div>';
     }).join('');
     var when = a && a.by ? Math.max.apply(null, Object.keys(a.by).map(function (k) { return a.by[k].at || 0; }).concat([0])) : 0;
     return '<div class="wrap page"><p class="crumb"><a href="#/' + (done ? 'finished' : 'books') + '">' + (done ? 'Read' : 'My books') + '</a> / Book</p>' +
@@ -984,13 +984,108 @@
       rows.map(function (r) { return bookRow(r.b, avail, libs); }).join('') + '</div>';
   };
 
+  /* ----- library finder: the catalogue has no search-by-name, so the whole list of libraries (about 13,000 names and codes)
+     is downloaded once on this device, a few pages at a time, and kept for 30 days. Searching works while it loads. ----- */
+  var DIR = { list: [], total: 0, state: 'idle', built: '' }, DIR_CACHE = 'stlibs-v1', DIR_DAYS = 30, libQuery = '';
+  function dirAdd(items) {
+    arr(items).forEach(function (it) {
+      var key = String((it && (it.preferredKey || it.id)) || (Array.isArray(it) ? it[0] : '')).toLowerCase();
+      var name = String((it && it.name) || (Array.isArray(it) ? it[1] : '') || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      if (!/^[a-z0-9-]+$/.test(key) || !name || (it && it.status && it.status !== 'Live')) return;
+      DIR.list.push([key, name, norm(name)]);
+    });
+  }
+  function dirSave() {
+    if (!window.caches) return;
+    var body = JSON.stringify({ at: Date.now(), libraries: DIR.list.map(function (l) { return [l[0], l[1]]; }) });
+    caches.open(DIR_CACHE).then(function (c) { return c.put('libraries', new Response(body, { headers: { 'Content-Type': 'application/json' } })); }).catch(function () {});
+  }
+  function dirFromCache() {
+    if (!window.caches) return Promise.resolve(false);
+    return caches.open(DIR_CACHE).then(function (c) { return c.match('libraries'); }).then(function (res) { return res ? res.json() : null; }).then(function (d) {
+      if (!d || !Array.isArray(d.libraries) || d.libraries.length < 500 || Date.now() - (d.at || 0) > DIR_DAYS * 864e5) return false;
+      dirAdd(d.libraries); return true;
+    }).catch(function () { return false; });
+  }
+  function dirFromRepo() {      // present only if the repo's optional "Update library list" workflow is switched on
+    return fetch('data/libraries.json', { cache: 'no-cache' }).then(function (res) { return res.ok ? res.json() : null; }).then(function (d) {
+      if (!d || !Array.isArray(d.libraries) || d.libraries.length < 500) return false;
+      dirAdd(d.libraries); return true;
+    }).catch(function () { return false; });
+  }
+  function dirFromCatalogue() {
+    return fetchText(SRC.libList(1), isJSON).then(function (txt) {
+      var d = JSON.parse(txt), size = arr(d.items).length;
+      dirAdd(d.items); DIR.total = d.totalItems | 0; paintFinder();
+      var pages = size ? Math.min(Math.ceil(DIR.total / size), 1500) : 1, next = 2, active = 0, failed = 0;
+      if (pages < 2) return;
+      return new Promise(function (resolve) {
+        function lane() {
+          if (next > pages || failed > 5) { if (!active) resolve(); return; }
+          var pg = next++; active++;
+          fetchText(SRC.libList(pg), isJSON).then(function (t) { dirAdd(JSON.parse(t).items); }, function () { failed++; })
+            .then(function () { active--; paintFinder(); setTimeout(lane, 60); });
+        }
+        for (var i = 0; i < 4; i++) lane();
+      }).then(function () { if (failed > 5) { var e = new Error('partial'); throw e; } });
+    });
+  }
+  function dirLoad() {
+    if (DIR.state !== 'idle') return;
+    DIR.state = 'loading'; paintFinder();
+    dirFromCache().then(function (ok) { return ok || dirFromRepo(); }).then(function (ok) {
+      if (ok) return;
+      return dirFromCatalogue().then(function () { dirSave(); });
+    }).then(function () { DIR.state = 'ready'; }, function () { DIR.state = DIR.list.length ? 'partial' : 'error'; }).then(paintFinder);
+  }
+  function dirSearch(q) {
+    var words = norm(q).split(' ').filter(Boolean), nq = norm(q), raw = String(q).trim().toLowerCase();
+    if (!words.length) return [];
+    var hits = [];
+    for (var i = 0; i < DIR.list.length; i++) {
+      var l = DIR.list[i], hay = ' ' + l[2] + ' ' + l[0], ok = true;
+      for (var w = 0; w < words.length; w++) if (hay.indexOf(words[w]) < 0) { ok = false; break; }
+      if (ok) hits.push([l[0] === raw ? 0 : l[2] === nq ? 1 : l[2].indexOf(nq) === 0 ? 2 : (' ' + l[2]).indexOf(' ' + nq) > -1 ? 3 : 4, l]);
+    }
+    hits.sort(function (x, y) { return x[0] - y[0] || x[1][2].length - y[1][2].length || x[1][1].localeCompare(y[1][1]); });
+    return hits.slice(0, 25).map(function (h) { return h[1]; });
+  }
+  function finderHTML() {
+    var st = '', res = '';
+    if (DIR.state === 'loading') st = DIR.total ? 'Loading the list of libraries: ' + DIR.list.length.toLocaleString() + ' of about ' + DIR.total.toLocaleString() + '. You can search while it loads.' : 'Loading the list of libraries…';
+    else if (DIR.state === 'error') st = 'The list of libraries could not be loaded. Check your connection and try again, or type the code below.';
+    else if (DIR.state === 'partial') st = 'Only part of the list loaded (' + DIR.list.length.toLocaleString() + ' libraries). If yours is missing, try again later.';
+    if (libQuery.trim() && DIR.list.length) {
+      var have = {}, hits = dirSearch(libQuery);
+      getLibs().forEach(function (l) { have[l.key] = 1; });
+      res = hits.length ? hits.map(function (l) {
+        return '<div class="found"><span><strong>' + esc(l[1]) + '</strong><small>Code: ' + esc(l[0]) + '</small></span>' +
+          (have[l[0]] ? '<span class="muted">Added</span>' : '<button type="button" class="btn" data-act="lib-add" data-id="' + esc(l[0]) + '" data-name="' + esc(l[1]) + '">Add<span class="sr-only"> ' + esc(l[1]) + '</span></button>') + '</div>';
+      }).join('') + (hits.length === 25 ? '<p class="muted">Showing the first 25. Type more of the name to narrow it down.</p>' : '')
+        : (DIR.state === 'loading' ? '' : '<p class="muted">No library matches “' + esc(libQuery.trim()) + '”. Try fewer words, or the town or county name.</p>');
+    }
+    return '<p class="status-line' + (DIR.state === 'error' ? ' is-error' : '') + '" role="status" aria-live="polite">' + esc(st) + '</p>' + res;
+  }
+  function paintFinder() { var el = document.getElementById('lib-results'); if (el) el.innerHTML = finderHTML(); }
+  main.addEventListener('input', function (e) {
+    if (!e.target || e.target.id !== 'lib-find') return;
+    libQuery = e.target.value;
+    if (libQuery.trim()) dirLoad();
+    paintFinder();
+  });
+  main.addEventListener('submit', function (e) { if (e.target.getAttribute && e.target.getAttribute('data-form') === 'find-lib') e.preventDefault(); });
+
   VIEWS.libraries = function () {
     var libs = getLibs();
     return '<div class="wrap page"><header class="page__head"><h1>My libraries</h1><p>Add each library you have a card for in Libby. Storytime checks every book at all of them.</p></header>' +
       (libs.length ? libs.map(function (l) {
         return '<div class="card libcard"><h3>' + esc(l.name) + '</h3><p class="muted">Code: ' + esc(l.key) + '</p><div class="actions"><a class="btn" href="https://libbyapp.com/library/' + esc(encodeURIComponent(l.key)) + '" target="_blank" rel="noopener">Open in Libby</a><button type="button" class="link-btn" data-act="lib-remove" data-id="' + esc(l.key) + '">Remove</button></div></div>';
       }).join('') : '<div class="empty"><p>No libraries yet.</p></div>') +
-      '<h2>Add a library</h2><form class="card" data-form="add-lib"><div class="field"><label for="lib-in">Library codes or web addresses</label>' +
+      '<h2>Find your library</h2><form class="card" data-form="find-lib"><div class="field"><label for="lib-find">Library name, town or county</label>' +
+        '<input id="lib-find" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search" placeholder="e.g. Seattle Public Library" value="' + esc(libQuery) + '">' +
+        '<small>Shows each matching library with its Libby code. The first search downloads the list of libraries, which takes a few seconds.</small></div>' +
+        '<div id="lib-results">' + finderHTML() + '</div></form>' +
+      '<h2>Add by code</h2><form class="card" data-form="add-lib"><div class="field"><label for="lib-in">Library codes or web addresses</label>' +
         '<input id="lib-in" name="lib" type="text" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="e.g. nypl, brooklyn" required>' +
         '<small>The code is the first part of your library’s OverDrive web address, <strong>code</strong>.overdrive.com. It is usually a short form of the name: New York Public Library is <strong>nypl</strong>, Brooklyn Public Library is <strong>brooklyn</strong>. Several at once is fine: separate them with commas. Not sure of one? Search the web for your library’s name plus “OverDrive” and paste the address here.</small></div>' +
         '<div class="actions"><button type="submit" class="btn btn--solid">Add library</button></div><p class="status-line" id="lib-status" role="status" aria-live="polite"></p></form></div>';
@@ -1045,6 +1140,10 @@
       saveBooks(getBooks().filter(function (b) { return b.id !== id; }));
       var av = getAvail(); delete av[id]; store.set('avail', av);
       location.hash = '#/books';
+    }
+    else if (act === 'lib-add') {
+      var ls = getLibs(), nm = el.getAttribute('data-name') || id;
+      if (/^[a-z0-9-]+$/.test(id) && !ls.some(function (l) { return l.key === id; })) { ls.push({ key: id, name: nm.slice(0, 120) }); store.set('libs', ls); rebuildIndex(); route({ keepScroll: true }); }
     }
     else if (act === 'lib-remove') {
       if (!window.confirm('Remove this library from Storytime?')) return;

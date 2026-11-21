@@ -3,7 +3,7 @@ window.APP_META = {
   name: 'Storytime',
   short: 'Storytime',
   tagline: 'Your reading list, at your libraries',
-  version: '1.0.5',
+  version: '1.1.0',
   repo: 'storytime',
   attribution: 'App created by Isabella Navarro, MD. Latest version November 2026. isaymotion@gmail.com'
 };

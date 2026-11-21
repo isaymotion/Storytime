@@ -295,3 +295,7 @@ form.card{padding:18px}
 .btn[disabled],.link-btn[disabled]{opacity:.5;cursor:default}
 .libby-btn{justify-self:start}
 .btn__ico{width:18px;height:18px;flex:none}
+.found{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--rule)}
+.found strong{display:block;font:600 .98rem/1.3 var(--sans)}
+.found small{color:var(--ink-3);font-size:.86rem}
+.field input[type="search"]{-webkit-appearance:none;appearance:none}
